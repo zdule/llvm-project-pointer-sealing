@@ -203,6 +203,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
   InitDataSharingAttributesStack();
 
   PointerInterpretation = Context.getDefaultPointerInterpretation();
+  PointerSealingMode = CHERIPointerSealingMode::AutoUnsealed;
 
   std::unique_ptr<sema::SemaPPCallbacks> Callbacks =
       std::make_unique<sema::SemaPPCallbacks>();

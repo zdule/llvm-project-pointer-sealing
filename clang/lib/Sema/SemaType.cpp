@@ -2071,6 +2071,23 @@ static QualType deduceOpenCLPointeeAddrSpace(Sema &S, QualType PointeeType) {
   return PointeeType;
 }
 
+unsigned Sema::GetPointerSealingType(QualType PointeeType) {
+  if (PointerSealingMode == CHERIPointerSealingMode::AutoSealed)
+    return 123;
+  else
+    return  0;
+}
+
+QualType Sema::GetUnsealedPointerType(QualType PointerT) {
+  Qualifiers quals = PointerT.getQualifiers();
+  const PointerType *pt = dyn_cast<PointerType>(PointerT.getTypePtr());
+  QualType UnsealedType = Context.getPointerType(
+      pt->getPointeeType(),
+      pt->getPointerInterpretation(),
+      0);
+  return Context.getQualifiedType(UnsealedType, quals);
+}
+
 /// Build a pointer type.
 ///
 /// \param T The type to which we'll be building a pointer.
@@ -2126,7 +2143,7 @@ QualType Sema::BuildPointerType(QualType T,
   // Build the pointer type.
   if (ValidPointer)
     *ValidPointer = true;
-  return Context.getPointerType(T, PointerInterpretation);
+  return Context.getPointerType(T, PointerInterpretation, GetPointerSealingType(T));
 }
 
 /// Build a reference type.
@@ -7901,18 +7918,18 @@ QualType Sema::BuildPointerInterpretationAttr(QualType T,
     Qualifiers Qs = T.getQualifiers();
 
     if (const PointerType *PT = T->getAs<PointerType>())
-      T = Context.getPointerType(PT->getPointeeType(), PIK);
+      T = Context.getPointerType(PT->getPointeeType(), PIK, T->castAs<PointerType>()->getSealingType());
     else if (const LValueReferenceType *LRT = T->getAs<LValueReferenceType>())
-      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, PIK);
+      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, PIK, T->castAs<ReferenceType>()->getSealingType());
     else if (const RValueReferenceType *RRT = T->getAs<RValueReferenceType>())
-      T = Context.getRValueReferenceType(RRT->getPointeeType(), PIK);
+      T = Context.getRValueReferenceType(RRT->getPointeeType(), PIK, T->castAs<ReferenceType>()->getSealingType());
     else
       llvm_unreachable("Don't know how to set the interpretation for T");
 
     if (Qs.hasQualifiers())
       T = Context.getQualifiedType(T, Qs);
   } else if (T->isDependentType()) {
-    T = Context.getDependentPointerType(T, PIK, QualifierLoc);
+    T = Context.getDependentPointerType(T, PIK, T->castAs<DependentPointerType>()->getSealingType(), QualifierLoc);
   } else {
     Diag(QualifierLoc, diag::err_cheri_capability_attribute_pointers_only)
         << T;
@@ -8038,6 +8055,46 @@ static void handleCheriNoProvenanceAttr(QualType &T, TypeProcessingState &State,
     S.Diag(Attr.getLoc(), diag::warn_duplicate_attribute_exact)
         << Attr.getAttrName();
   T = State.getAttributedType(createSimpleAttr<CHERINoProvenanceAttr>(S.Context, Attr), T, T);
+}
+
+QualType Sema::BuildPointerSealedAttr(QualType T, unsigned SealingType,
+                                              SourceLocation QualifierLoc) {
+  if (T->isPointerType() || T->isReferenceType()) {
+    // preserve existing qualifiers on T
+    Qualifiers Qs = T.getQualifiers();
+
+    if (const PointerType *PT = T->getAs<PointerType>())
+      T = Context.getPointerType(PT->getPointeeType(), T->castAs<PointerType>()->getPointerInterpretation(), SealingType);
+    else if (const LValueReferenceType *LRT = T->getAs<LValueReferenceType>())
+      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, T->castAs<ReferenceType>()->getPointerInterpretation(), SealingType);
+    else if (const RValueReferenceType *RRT = T->getAs<RValueReferenceType>())
+      T = Context.getRValueReferenceType(RRT->getPointeeType(), T->castAs<ReferenceType>()->getPointerInterpretation(), SealingType);
+    else
+      llvm_unreachable("Don't know how to set the interpretation for T");
+
+    if (Qs.hasQualifiers())
+      T = Context.getQualifiedType(T, Qs);
+  } else if (T->isDependentType()) {
+    T = Context.getDependentPointerType(T, T->castAs<DependentPointerType>()->getPointerInterpretation(), SealingType, QualifierLoc);
+  } else {
+    Diag(QualifierLoc, diag::err_cheri_capability_attribute_pointers_only)
+        << T;
+  }
+
+  return T;
+}
+
+static void handleCheriSealedPointerAttr(QualType &T, TypeProcessingState &State,
+                                        TypeAttrLocation TAL,
+                                        ParsedAttr &Attr) {
+  Sema &S = State.getSema();
+  Attr.setUsedAsTypeAttr();
+  if (!T->isCapabilityPointerType()) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
+        << Attr.getAttrName() << "capability types";
+    return;
+  }
+  T = S.BuildPointerSealedAttr(T, 123, Attr.getLoc());
 }
 
 static bool HandleMemoryAddressAttr(QualType &T, TypeProcessingState &State,
@@ -8377,6 +8434,9 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       break;
     case ParsedAttr::AT_CHERINoProvenance:
       handleCheriNoProvenanceAttr(type, state, TAL, attr);
+      break;
+    case ParsedAttr::AT_CHERISealedPointer:
+      handleCheriSealedPointerAttr(type, state, TAL, attr);
       break;
     case ParsedAttr::AT_MemoryAddress:
       if (!HandleMemoryAddressAttr(type, state, TAL, attr)) {

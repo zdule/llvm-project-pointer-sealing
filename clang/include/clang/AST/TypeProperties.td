@@ -24,8 +24,11 @@ let Class = PointerType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
+  def : Property<"SealingType", UInt32> {
+      let Read = [{ node->getSealingType() }];
+  }
 
-  def : Creator<[{ return ctx.getPointerType(pointeeType, pointerInterpretation); }]>;
+  def : Creator<[{ return ctx.getPointerType(pointeeType, pointerInterpretation, SealingType); }]>;
 }
 
 let Class = AdjustedType in {
@@ -64,6 +67,9 @@ let Class = ReferenceType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
+  def : Property<"SealingType", UInt32> {
+        let Read = [{ node->getSealingType() }];
+   }
 }
 
 let Class = LValueReferenceType in {
@@ -74,14 +80,16 @@ let Class = LValueReferenceType in {
   def : Creator<[{
     return ctx.getLValueReferenceType(pointeeTypeAsWritten,
                                       isSpelledAsLValue,
-                                      pointerInterpretation);
+                                      pointerInterpretation,
+                                      SealingType);
   }]>;
 }
 
 let Class = RValueReferenceType in {
   def : Creator<[{
     return ctx.getRValueReferenceType(pointeeTypeAsWritten,
-                                      pointerInterpretation);
+                                      pointerInterpretation,
+                                      SealingType);
   }]>;
 }
 
@@ -634,12 +642,15 @@ let Class = DependentPointerType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
+  def : Property<"SealingType", UInt32> {
+      let Read = [{ node->getSealingType() }];
+   }
   def : Property<"qualifierLoc", SourceLocation> {
     let Read = [{ node->getQualifierLoc() }];
   }
 
   def : Creator<[{
-    return ctx.getDependentPointerType(pointerType, pointerInterpretation,
+    return ctx.getDependentPointerType(pointerType, pointerInterpretation, SealingType,
                                        qualifierLoc);
   }]>;
 }

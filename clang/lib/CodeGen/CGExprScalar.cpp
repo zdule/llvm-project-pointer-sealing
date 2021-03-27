@@ -2378,6 +2378,49 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
 
     return Builder.CreateBitCast(Src, DstTy);
   }
+  case CK_CHERISealedCapabilityConversion:
+  {
+    auto &M = CGF.CGM.getModule();
+    auto *CapSeal = M.getNamedGlobal("__cheri_sealing_capability");
+    if (!CapSeal) {
+      // Create a global variable for the sealing capability
+      // Copied from CHERI_errorno
+      // TODO: dz308 don't hardcode AddressSpace 200
+      CapSeal = new llvm::GlobalVariable(M, CGF.VoidCheriCapTy,
+          /*isConstant*/false, llvm::GlobalValue::ExternalLinkage,
+                                            nullptr, "__cheri_sealing_capability", nullptr, llvm::GlobalValue::NotThreadLocal,
+                                            200);
+    }
+
+    Value *InCap = Visit(const_cast<Expr*>(E));
+
+    InCap = Builder.CreateBitCast(InCap, CGF.VoidCheriCapTy);
+    // TODO: dz308: don't hardcode 16 byte alignment
+    Value *SealCap = Builder.CreateLoad(Address(CapSeal, CharUnits::fromQuantity(16)));
+
+    unsigned OldSealingType = E->getType()->castAs<PointerType>()
+        ->getSealingType();
+    unsigned NewSealingType = DestTy->castAs<PointerType>()->getSealingType();
+    if (OldSealingType != 0) {
+      Value *OldSealingTypeConst = llvm::ConstantInt::get(CGF.SizeTy, OldSealingType);
+      Value *UnsealCap =
+          Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_offset_set,
+                                  {CGF.SizeTy}, {SealCap, OldSealingTypeConst});
+      InCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_unseal, {},
+                                      {InCap, UnsealCap});
+    }
+
+    if (NewSealingType != 0)
+    {
+      Value *NewSealingTypeConst = llvm::ConstantInt::get(CGF.SizeTy, NewSealingType);
+      SealCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_offset_set,
+                                        {CGF.SizeTy},
+                                        {SealCap, NewSealingTypeConst});
+      InCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_seal, {},
+                                     {InCap, SealCap});
+    }
+    return Builder.CreateBitCast(InCap,ConvertType(E->getType()));
+  }
   case CK_AddressSpaceConversion:
   // FIXME: these two should probably be moved
   case CK_CHERICapabilityToPointer:

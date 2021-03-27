@@ -134,6 +134,8 @@ class VarTemplateDecl;
 class VTableContextBase;
 struct BlockVarCopyInit;
 
+#define UNCERTAIN_SEALING_TYPE 0
+
 namespace Builtin {
 
 class Context;
@@ -1192,15 +1194,18 @@ public:
   /// Return the uniqued reference to the type for a pointer to
   /// the specified type.
   QualType getPointerType(QualType T) const {
-    return getPointerType(T, getDefaultPointerInterpretation());
+    return getPointerType(T, getDefaultPointerInterpretation(), 0);
   }
-  QualType getPointerType(QualType T, PointerInterpretationKind PIK) const;
+  QualType getPointerType(QualType T, PointerInterpretationKind PIK,
+                          unsigned SealingType) const;
   CanQualType getPointerType(CanQualType T) const {
-    return getPointerType(T, getDefaultPointerInterpretation());
+    return getPointerType(T, getDefaultPointerInterpretation(), 0);
   }
   CanQualType getPointerType(CanQualType T,
-                             PointerInterpretationKind PIK) const {
-    return CanQualType::CreateUnsafe(getPointerType((QualType) T, PIK));
+                             PointerInterpretationKind PIK,
+                             unsigned SealingType) const {
+    return CanQualType::CreateUnsafe(getPointerType((QualType) T, PIK,
+                                                    SealingType));
   }
 
   /// Return the uniqued reference to a type adjusted from the original
@@ -1278,18 +1283,20 @@ public:
   QualType getLValueReferenceType(QualType T,
                                   bool SpelledAsLValue = true) const {
     return getLValueReferenceType(T, SpelledAsLValue,
-                                  getDefaultPointerInterpretation());
+                                  getDefaultPointerInterpretation(), 0);
   }
   QualType getLValueReferenceType(QualType T, bool SpelledAsLValue,
-                                  PointerInterpretationKind PIK) const;
+                                  PointerInterpretationKind PIK,
+                                  unsigned SealingType) const;
 
   /// Return the uniqued reference to the type for an rvalue reference
   /// to the specified type.
   QualType getRValueReferenceType(QualType T) const {
-    return getRValueReferenceType(T, getDefaultPointerInterpretation());
+    return getRValueReferenceType(T, getDefaultPointerInterpretation(), 0);
   }
   QualType getRValueReferenceType(QualType T,
-                                  PointerInterpretationKind PIK) const;
+                                  PointerInterpretationKind PIK,
+                                  unsigned SealingType) const;
 
   /// Return the uniqued reference to the type for a member pointer to
   /// the specified type in the specified class.
@@ -1387,6 +1394,7 @@ public:
 
   QualType getDependentPointerType(QualType PointerType,
                                    PointerInterpretationKind PIK,
+                                   unsigned SealingType,
                                    SourceLocation QualifierLoc) const;
 
   /// Return a K&R style C function type like 'int()'.

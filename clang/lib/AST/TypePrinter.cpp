@@ -400,6 +400,8 @@ void TypePrinter::printPointerBefore(const PointerType *T, raw_ostream &OS) {
   if (isa<ArrayType>(PointeeTy))
     OS << '(';
   OS << '*';
+  if (T->getSealingType() != 0)
+    OS << " __cheri_sealed_pointer";
 }
 
 void TypePrinter::printPointerAfter(const PointerType *T, raw_ostream &OS) {

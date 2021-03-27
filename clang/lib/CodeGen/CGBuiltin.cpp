@@ -3936,6 +3936,37 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     break;
   }
 
+  case Builtin::BI__builtin_cheri_convert_sealed_capabilities: {
+    Value *InCap = Builder.CreateBitCast(EmitScalarExpr(E->getArg(0)), VoidCheriCapTy);
+    unsigned OldSealingType = E->getArg(0)->getType()->castAs<PointerType>()
+        ->getSealingType();
+    llvm::APSInt NewSealingType;
+    if (!E->getArg(2)->isIntegerConstantExpr(NewSealingType,getContext())) {
+      llvm_unreachable("NewSealingType was verified to be an integer constant in type checking but is not in CodeGen");
+    }
+
+    if (OldSealingType != 0) {
+      Value *UnsealCap = EmitScalarExpr(E->getArg(1));
+      Value *OldSealingTypeConst = llvm::ConstantInt::get(SizeTy, OldSealingType);
+      UnsealCap =
+          Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_offset_set,
+                                  {SizeTy}, {UnsealCap, OldSealingTypeConst});
+      InCap = Builder.CreateIntrinsic(Intrinsic::cheri_cap_unseal, {},
+                                      {InCap, UnsealCap});
+    }
+
+    if (NewSealingType != 0) {
+      Value *SealCap = EmitScalarExpr(E->getArg(3));
+      Value *NewSealingTypeConst = llvm::ConstantInt::get(SizeTy, NewSealingType);
+      SealCap = Builder.CreateIntrinsic(Intrinsic::cheri_cap_offset_set,
+                                        {SizeTy},
+                                        {SealCap, NewSealingTypeConst});
+      InCap = Builder.CreateIntrinsic(Intrinsic::cheri_cap_seal, {},
+                                      {InCap, SealCap});
+    }
+    return RValue::get(Builder.CreateBitCast(InCap, ConvertType(E->getType())));
+  }
+
   case Builtin::BI__builtin_cheri_cap_from_pointer: {
     Value *GlobalCap = EmitScalarExpr(E->getArg(0));
     Value *PtrArg = EmitScalarExpr(E->getArg(1));

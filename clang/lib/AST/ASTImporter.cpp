@@ -1097,7 +1097,8 @@ ExpectedType ASTNodeImporter::VisitPointerType(const PointerType *T) {
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
-  return Importer.getToContext().getPointerType(*ToPointeeTypeOrErr, T->getPointerInterpretation());
+  return Importer.getToContext().getPointerType(*ToPointeeTypeOrErr, T->getPointerInterpretation(),
+                                                T->getSealingType());
 }
 
 ExpectedType ASTNodeImporter::VisitBlockPointerType(const BlockPointerType *T) {
@@ -1116,7 +1117,10 @@ ASTNodeImporter::VisitLValueReferenceType(const LValueReferenceType *T) {
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
-  return Importer.getToContext().getLValueReferenceType(*ToPointeeTypeOrErr, T->isSpelledAsLValue(), T->getPointerInterpretation());
+  return Importer.getToContext().getLValueReferenceType(*ToPointeeTypeOrErr,
+                                                        T->isSpelledAsLValue(),
+                                                        T->getPointerInterpretation(),
+                                                        T->getSealingType());
 }
 
 ExpectedType
@@ -1126,7 +1130,9 @@ ASTNodeImporter::VisitRValueReferenceType(const RValueReferenceType *T) {
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
-  return Importer.getToContext().getRValueReferenceType(*ToPointeeTypeOrErr, T->getPointerInterpretation());
+  return Importer.getToContext().getRValueReferenceType(*ToPointeeTypeOrErr,
+                                                        T->getPointerInterpretation(),
+                                                        T->getSealingType());
 }
 
 ExpectedType

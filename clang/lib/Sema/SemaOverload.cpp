@@ -2311,7 +2311,7 @@ BuildSimilarlyQualifiedPointerType(const Type *FromPtr,
     // already.
     if (isa<ObjCObjectPointerType>(ToType))
       return Context.getObjCObjectPointerType(ToPointee);
-    return Context.getPointerType(ToPointee, PIK);
+    return Context.getPointerType(ToPointee, PIK, UNCERTAIN_SEALING_TYPE);
   }
 
   // Just build a canonical type that has the right qualifiers.
@@ -2320,7 +2320,7 @@ BuildSimilarlyQualifiedPointerType(const Type *FromPtr,
 
   if (isa<ObjCObjectPointerType>(ToType))
     return Context.getObjCObjectPointerType(QualifiedCanonToPointee);
-  return Context.getPointerType(QualifiedCanonToPointee, PIK);
+  return Context.getPointerType(QualifiedCanonToPointee, PIK, UNCERTAIN_SEALING_TYPE);
 }
 
 static bool isNullPointerConstantForConversion(Expr *Expr,

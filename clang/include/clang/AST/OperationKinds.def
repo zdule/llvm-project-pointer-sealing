@@ -348,6 +348,9 @@ CAST_OPERATION(AddressSpaceConversion)
 // Convert a CHERI capability to a pointer.
 CAST_OPERATION(CHERICapabilityToPointer)
 
+// Convert between sealed CHERI capabilities with different sealing types.
+CAST_OPERATION(CHERISealedCapabilityConversion)
+
 // Convert a pointer to a CHERI capability.
 CAST_OPERATION(PointerToCHERICapability)
 

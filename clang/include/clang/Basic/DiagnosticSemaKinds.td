@@ -6659,6 +6659,9 @@ def err_typecheck_convert_ptr_to_cap: Error<"converting non-capability"
 def err_typecheck_convert_ptr_to_cap_unrelated_type: Error<"cannot implicitly "
   "or explicitly convert non-capability%select{| reference to}2 type %0 to "
   "unrelated capability type %1">;
+def err_typecheck_incompatible_nested_sealing_types: Error<"converting capability "
+  "%select{| reference}2 type %0 to capability %select{| reference}3 type %1 with "
+  "incompatible nested sealing types">;
 
 def warn_uintcap_bitwise_and : Warning<
   "using bitwise and on a capability type may give surprising results; "

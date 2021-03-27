@@ -1689,6 +1689,10 @@ public:
                                           PointerInterpretationKind PIK,
                                           SourceLocation QualifierLoc);
 
+  QualType BuildPointerSealedAttr(QualType T,
+                                          unsigned SealingType,
+                                          SourceLocation QualifierLoc);
+
   bool CheckQualifiedFunctionForTypeId(QualType T, SourceLocation Loc);
 
   bool CheckFunctionReturnType(QualType T, SourceLocation Loc);
@@ -9627,6 +9631,24 @@ public:
     PointerInterpretationStack.pop_back();
   }
 
+  enum CHERIPointerSealingMode {
+    AutoSealed,
+    AutoUnsealed,
+  };
+  CHERIPointerSealingMode PointerSealingMode;
+  llvm::SmallVector<CHERIPointerSealingMode, 4> PointerSealingModeStack;
+  void ActOnPragmaPointerSealingModePush() {
+    PointerSealingModeStack.push_back(PointerSealingMode);
+  }
+  void ActOnPragmaPointerSealingModePop() {
+    PointerSealingMode = PointerSealingModeStack.back();
+    PointerSealingModeStack.pop_back();
+  }
+  void ActOnPragmaPointerSealingMode(CHERIPointerSealingMode mode) {
+    PointerSealingMode = mode;
+  }
+  unsigned GetPointerSealingType(QualType PointeeType);
+
   enum class PragmaPackDiagnoseKind {
     NonDefaultStateAtInclude,
     ChangedStateAtExit
@@ -11105,6 +11127,10 @@ public:
     /// PointerToCHERICapability - The assignment converts a pointer to a
     /// capability, which we reject (it needs an explicit __cheri_tocap).
     PointerToCHERICapability,
+
+    /// IncompatibleNestedCHERISealingTypes - Assigment between mutli-level
+    /// pointers with inner pointer having different CHERI sealing types.
+    IncompatibleNestedCHERISealingTypes,
 
     /// FunctionVoidPointer - The assignment is between a function pointer and
     /// void*, which the standard doesn't allow, but we accept as an extension.
@@ -12604,6 +12630,7 @@ public:
   /// Adds Callee to DeviceCallGraph if we don't know if its caller will be
   /// codegen'ed yet.
   bool checkSYCLDeviceFunction(SourceLocation Loc, FunctionDecl *Callee);
+  QualType GetUnsealedPointerType(QualType PointerType);
 };
 
 /// RAII object that enters a new expression evaluation context.

@@ -2125,6 +2125,13 @@ def CHERINoProvenance : TypeAttr {
   let Documentation = [Undocumented]; // FIXME
 }
 
+def CHERISealedPointer : TypeAttr {
+  let Spellings = [GNU<"cheri_sealed_pointer">,
+                   CXX11<"cheri","sealed_pointer">,
+                   C2x<"cheri", "sealed_pointer">];
+  let Documentation = [Undocumented]; // FIXME
+}
+
 def IntelOclBicc : DeclOrTypeAttr {
   let Spellings = [Clang<"intel_ocl_bicc", 0>];
 //  let Subjects = [Function, ObjCMethod];

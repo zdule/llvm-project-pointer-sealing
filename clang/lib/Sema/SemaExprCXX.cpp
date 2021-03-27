@@ -6491,7 +6491,7 @@ QualType Sema::FindCompositePointerType(SourceLocation Loc,
           Ctx.getDefaultPointerInterpretation();
       switch (K) {
       case Pointer:
-        return Ctx.getPointerType(T, PIK.getValueOr(DefaultPIK));
+        return Ctx.getPointerType(T, PIK.getValueOr(DefaultPIK), 0);
       case MemberPointer:
         return Ctx.getMemberPointerType(T, ClassOrBound);
       case ObjCPointer:

@@ -3152,11 +3152,12 @@ ASTContext::getDefaultPointerInterpretation() const {
 
 /// getPointerType - Return the uniqued reference to the type for a pointer to
 /// the specified type.
-QualType ASTContext::getPointerType(QualType T, PointerInterpretationKind PIK) const {
+QualType ASTContext::getPointerType(QualType T, PointerInterpretationKind PIK,
+                                    unsigned SealingType) const {
   // Unique pointers, to guarantee there is only one pointer of a particular
   // structure.
   llvm::FoldingSetNodeID ID;
-  PointerType::Profile(ID, T, PIK);
+  PointerType::Profile(ID, T, PIK, SealingType);
 
   void *InsertPos = nullptr;
   if (PointerType *PT = PointerTypes.FindNodeOrInsertPos(ID, InsertPos))
@@ -3166,13 +3167,13 @@ QualType ASTContext::getPointerType(QualType T, PointerInterpretationKind PIK) c
   // so fill in the canonical type field.
   QualType Canonical;
   if (!T.isCanonical()) {
-    Canonical = getPointerType(getCanonicalType(T), PIK);
+    Canonical = getPointerType(getCanonicalType(T), PIK, SealingType);
 
     // Get the new insert position for the node we care about.
     PointerType *NewIP = PointerTypes.FindNodeOrInsertPos(ID, InsertPos);
     assert(!NewIP && "Shouldn't be in the map!"); (void)NewIP;
   }
-  auto *New = new (*this, TypeAlignment) PointerType(T, Canonical, PIK);
+  auto *New = new (*this, TypeAlignment) PointerType(T, Canonical, PIK, SealingType);
   Types.push_back(New);
   PointerTypes.InsertNode(New, InsertPos);
   return QualType(New, 0);
@@ -3272,14 +3273,16 @@ QualType ASTContext::getBlockPointerType(QualType T) const {
 /// getLValueReferenceType - Return the uniqued reference to the type for an
 /// lvalue reference to the specified type.
 QualType
-ASTContext::getLValueReferenceType(QualType T, bool SpelledAsLValue, PointerInterpretationKind PIK) const {
+ASTContext::getLValueReferenceType(QualType T, bool SpelledAsLValue,
+                                   PointerInterpretationKind PIK,
+                                   unsigned SealingType) const {
   assert(getCanonicalType(T) != OverloadTy &&
          "Unresolved overloaded function type");
 
   // Unique pointers, to guarantee there is only one pointer of a particular
   // structure.
   llvm::FoldingSetNodeID ID;
-  ReferenceType::Profile(ID, T, SpelledAsLValue, PIK);
+  ReferenceType::Profile(ID, T, SpelledAsLValue, PIK, SealingType);
 
   void *InsertPos = nullptr;
   if (LValueReferenceType *RT =
@@ -3293,7 +3296,8 @@ ASTContext::getLValueReferenceType(QualType T, bool SpelledAsLValue, PointerInte
   QualType Canonical;
   if (!SpelledAsLValue || InnerRef || !T.isCanonical()) {
     QualType PointeeType = (InnerRef ? InnerRef->getPointeeType() : T);
-    Canonical = getLValueReferenceType(getCanonicalType(PointeeType), true, PIK);
+    Canonical = getLValueReferenceType(getCanonicalType(PointeeType), true, PIK,
+                                       SealingType);
 
     // Get the new insert position for the node we care about.
     LValueReferenceType *NewIP =
@@ -3303,7 +3307,7 @@ ASTContext::getLValueReferenceType(QualType T, bool SpelledAsLValue, PointerInte
 
   auto *New = new (*this, TypeAlignment) LValueReferenceType(T, Canonical,
                                                              SpelledAsLValue,
-                                                             PIK);
+                                                             PIK, SealingType);
   Types.push_back(New);
   LValueReferenceTypes.InsertNode(New, InsertPos);
 
@@ -3312,11 +3316,13 @@ ASTContext::getLValueReferenceType(QualType T, bool SpelledAsLValue, PointerInte
 
 /// getRValueReferenceType - Return the uniqued reference to the type for an
 /// rvalue reference to the specified type.
-QualType ASTContext::getRValueReferenceType(QualType T, PointerInterpretationKind PIK) const {
+QualType ASTContext::getRValueReferenceType(QualType T,
+                                            PointerInterpretationKind PIK,
+                                            unsigned SealingType) const {
   // Unique pointers, to guarantee there is only one pointer of a particular
   // structure.
   llvm::FoldingSetNodeID ID;
-  ReferenceType::Profile(ID, T, false, PIK);
+  ReferenceType::Profile(ID, T, false, PIK, SealingType);
 
   void *InsertPos = nullptr;
   if (RValueReferenceType *RT =
@@ -3330,7 +3336,8 @@ QualType ASTContext::getRValueReferenceType(QualType T, PointerInterpretationKin
   QualType Canonical;
   if (InnerRef || !T.isCanonical()) {
     QualType PointeeType = (InnerRef ? InnerRef->getPointeeType() : T);
-    Canonical = getRValueReferenceType(getCanonicalType(PointeeType), PIK);
+    Canonical = getRValueReferenceType(getCanonicalType(PointeeType), PIK,
+                                       SealingType);
 
     // Get the new insert position for the node we care about.
     RValueReferenceType *NewIP =
@@ -3339,7 +3346,7 @@ QualType ASTContext::getRValueReferenceType(QualType T, PointerInterpretationKin
   }
 
   auto *New = new (*this, TypeAlignment) RValueReferenceType(T, Canonical,
-                                                             PIK);
+                                                             PIK, SealingType);
   Types.push_back(New);
   RValueReferenceTypes.InsertNode(New, InsertPos);
   return QualType(New, 0);
@@ -3985,19 +3992,20 @@ QualType ASTContext::getDependentAddressSpaceType(QualType PointeeType,
 
 QualType ASTContext::getDependentPointerType(QualType PointerType,
                                              PointerInterpretationKind PIK,
+                                             unsigned SealingType,
                                              SourceLocation QualifierLoc) const {
   QualType CanonPointerType = getCanonicalType(PointerType);
 
   void *InsertPos = nullptr;
   llvm::FoldingSetNodeID ID;
-  DependentPointerType::Profile(ID, *this, CanonPointerType, PIK);
+  DependentPointerType::Profile(ID, *this, CanonPointerType, PIK, SealingType);
 
   DependentPointerType *Canon =
     DependentPointerTypes.FindNodeOrInsertPos(ID, InsertPos);
 
   if (!Canon) {
     Canon = new (*this, TypeAlignment) DependentPointerType(
-        *this, CanonPointerType, QualType(), PIK, QualifierLoc);
+        *this, CanonPointerType, QualType(), PIK, SealingType, QualifierLoc);
     DependentPointerTypes.InsertNode(Canon, InsertPos);
     Types.push_back(Canon);
   }
@@ -4008,7 +4016,7 @@ QualType ASTContext::getDependentPointerType(QualType PointerType,
 
   DependentPointerType *New = new (*this, TypeAlignment)
       DependentPointerType(*this, PointerType, QualType(Canon, 0), PIK,
-                           QualifierLoc);
+                           SealingType, QualifierLoc);
   Types.push_back(New);
   return QualType(New, 0);
 }
@@ -4392,7 +4400,7 @@ ASTContext::getTypedefType(const TypedefNameDecl *Decl,
       // Create a copy of the typedef whose name is prefixed by "__chericap_"
       // and whose underlying type is the cheri_capability qualified version of
       // the pointer type
-      Canonical = getPointerType(PT->getPointeeType(), PIK_Capability);
+      Canonical = getPointerType(PT->getPointeeType(), PIK_Capability, 0);
       TypeSourceInfo *TInfo = getTrivialTypeSourceInfo(Canonical, Decl->getBeginLoc());
       DeclContext *DC = const_cast<DeclContext *>(Decl->getDeclContext());
       std::string typedefName = "__chericap_" + Decl->getNameAsString();
@@ -7809,7 +7817,7 @@ RecordDecl *ASTContext::getCHERIClassDecl() const {
     RD = buildImplicitRecord("cheri_object");
     RD->startDefinition();
 
-    QualType CapTy = getPointerType(VoidTy, PIK_Capability);
+    QualType CapTy = getPointerType(VoidTy, PIK_Capability, 0);
 
     QualType FieldTypes[] = { CapTy, CapTy };
     static const char *const FieldNames[] = { "co_codecap", "co_datacap" };
@@ -9575,6 +9583,11 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS, bool OfBlockPointer,
          RHS->getAs<PointerType>()->isCHERICapability()))
       return QualType();
 
+    // The sealing type must match for two pointers to be compatible
+    if (LHS->getAs<PointerType>()->getSealingType() !=
+        RHS->getAs<PointerType>()->getSealingType())
+      return QualType();
+
     // special-case merging with void*
     if (MergeVoidPtr) {
       if (LHS->isVoidPointerType()) return RHS;
@@ -10350,7 +10363,14 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
           PIK = PIK_Capability;
           Str++;
         }
-        Type = Context.getPointerType(Type, PIK);
+        unsigned SealingType = 0;
+        if (*Str == '~')
+        {
+          Str++;
+          SealingType = strtoul(Str, &End, 10);
+          Str = End;
+        }
+        Type = Context.getPointerType(Type, PIK, SealingType);
       }
       else
         Type = Context.getLValueReferenceType(Type);

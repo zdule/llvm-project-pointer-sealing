@@ -9,7 +9,6 @@
 //  This file implements semantic analysis for expressions.
 //
 //===----------------------------------------------------------------------===//
-
 #include "TreeTransform.h"
 #include "UsedDeclVisitor.h"
 #include "clang/AST/ASTConsumer.h"
@@ -713,6 +712,15 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
                                    nullptr, VK_RValue);
   }
 
+  // Pointers are unsealed when converted to rvalue.
+  if (auto *pt = dyn_cast<PointerType>(T)) {
+    if (pt->getSealingType() != 0) {
+      if (Res.isInvalid())
+        return Res;
+      Res = ImpCastExprToType(Res.get(), GetUnsealedPointerType(T),
+                              CK_CHERISealedCapabilityConversion);
+    }
+  }
   return Res;
 }
 
@@ -2836,7 +2844,8 @@ Sema::PerformObjectMemberConversion(Expr *From,
 
     if (FromPtrType) {
       DestType = Context.getPointerType(DestRecordType,
-                                        FromPtrType->getPointerInterpretation());
+                                        FromPtrType->getPointerInterpretation(),
+                                          UNCERTAIN_SEALING_TYPE);
       FromRecordType = FromPtrType->getPointeeType();
       PointerConversions = true;
     } else {
@@ -2924,7 +2933,8 @@ Sema::PerformObjectMemberConversion(Expr *From,
       if (PointerConversions)
         QType = Context.getPointerType(QType,
                                        FromType->isCHERICapabilityType(Context)
-                                           ? PIK_Capability : PIK_Integer);
+                                           ? PIK_Capability : PIK_Integer,
+                                       UNCERTAIN_SEALING_TYPE);
       From = ImpCastExprToType(From, QType, CK_UncheckedDerivedToBase,
                                VK, &BasePath).get();
 
@@ -2963,7 +2973,8 @@ Sema::PerformObjectMemberConversion(Expr *From,
       if (PointerConversions)
         UType = Context.getPointerType(UType,
                                        FromType->isCHERICapabilityType(Context)
-                                           ? PIK_Capability : PIK_Integer);
+                                           ? PIK_Capability : PIK_Integer,
+                                       UNCERTAIN_SEALING_TYPE);
       From = ImpCastExprToType(From, UType, CK_UncheckedDerivedToBase,
                                VK, &BasePath).get();
       FromType = UType;
@@ -7729,6 +7740,19 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
     return QualType();
   }
 
+  // Cheri sealed pointers types must match
+  if (LHSTy->castAs<PointerType>()->getSealingType() != RHSTy->castAs<PointerType>()->getSealingType())
+  {
+    const auto id = S.getDiagnostics().getCustomDiagID(clang::DiagnosticsEngine::Error,
+                                 "incompatible cheri sealing types %0 and %1, on types %2 and %3");
+    S.Diag(Loc, id) << LHSTy->castAs<PointerType>()->getSealingType()
+                    <<  RHSTy->castAs<PointerType>()->getSealingType()
+                    << LHSTy.getAsString()
+                    << RHSTy.getAsString()
+                    << LHS.get()->getSourceRange()
+                    << RHS.get()->getSourceRange();
+  }
+
   unsigned MergedCVRQual = lhQual.getCVRQualifiers() | rhQual.getCVRQualifiers();
   auto LHSCastKind = CK_BitCast, RHSCastKind = CK_BitCast;
   lhQual.removeCVRQualifiers();
@@ -7803,7 +7827,7 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
         RHSTy->isCHERICapabilityType(S.Context, false)) {
       PIK = PIK_Capability;
     }
-    ResultTy = S.Context.getPointerType(ResultTy, PIK);
+    ResultTy = S.Context.getPointerType(ResultTy, PIK, LHSTy->castAs<PointerType>()->getSealingType());
   }
 
   LHS = S.ImpCastExprToType(LHS.get(), ResultTy, LHSCastKind);
@@ -7855,7 +7879,8 @@ checkConditionalObjectPointersCompatibility(Sema &S, ExprResult &LHS,
     QualType destPointee
       = S.Context.getQualifiedType(lhptee, rhptee.getQualifiers());
     QualType destType = S.Context.getPointerType(
-        destPointee, RHSTy->castAs<PointerType>()->getPointerInterpretation());
+        destPointee, RHSTy->castAs<PointerType>()->getPointerInterpretation(),
+        RHSTy->castAs<PointerType>()->getSealingType());
     // Add qualifiers if necessary.
     LHS = S.ImpCastExprToType(LHS.get(), destType, CK_NoOp);
     // Promote to void*.
@@ -7866,7 +7891,8 @@ checkConditionalObjectPointersCompatibility(Sema &S, ExprResult &LHS,
     QualType destPointee
       = S.Context.getQualifiedType(rhptee, lhptee.getQualifiers());
     QualType destType = S.Context.getPointerType(
-        destPointee, LHSTy->castAs<PointerType>()->getPointerInterpretation());
+        destPointee, LHSTy->castAs<PointerType>()->getPointerInterpretation(),
+        LHSTy->castAs<PointerType>()->getSealingType());
     // Add qualifiers if necessary.
     RHS = S.ImpCastExprToType(RHS.get(), destType, CK_NoOp);
     // Promote to void*.
@@ -8206,6 +8232,7 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
     return checkConditionalBlockPointerCompatibility(*this, LHS, RHS,
                                                      QuestionLoc);
 
+  //TODO: handle type sealed pointers
   // Check constraints for C object pointers types (C99 6.5.15p3,6).
   if (LHSTy->isPointerType() && RHSTy->isPointerType())
     return checkConditionalObjectPointersCompatibility(*this, LHS, RHS,
@@ -8794,6 +8821,15 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
     // level of indirection, this must be the issue.
     if (isa<PointerType>(lhptee) && isa<PointerType>(rhptee)) {
       do {
+        // Check if pointer types are sealed differently
+        // FIXME: complains about different sealing types even if pointers would
+        // be incompatible even with sealing types ignored, eg:
+        // int *[[cheri::sealed_pointer] * p = (double**) NULL;
+        // would complain about sealing types.
+        if (lhptee->castAs<PointerType>()->getSealingType() !=
+            rhptee->castAs<PointerType>()->getSealingType())
+          return Sema::IncompatibleNestedCHERISealingTypes;
+
         std::tie(lhptee, lhq) =
           cast<PointerType>(lhptee)->getPointeeType().split().asPair();
         std::tie(rhptee, rhq) =
@@ -9102,6 +9138,19 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
                                                : CK_PointerToCHERICapability;
         return RHSPointer->isCHERICapability() ? CHERICapabilityToPointer
                                                : PointerToCHERICapability;
+      } else if (LHSPointer->getSealingType() != RHSPointer->getSealingType()) {
+        QualType IntermediaryType = Context.getPointerType(
+            LHSPointer->getPointeeType(),
+            LHSPointer->getPointerInterpretation(),
+            RHSPointer->getSealingType());
+        Sema::AssignConvertType result =
+            CheckAssignmentConstraints(IntermediaryType, RHS, Kind);
+        if (result != Compatible)
+          return result;
+        if (Kind != CK_NoOp && ConvertRHS)
+          RHS = ImpCastExprToType(RHS.get(), IntermediaryType, Kind);
+        Kind = CK_CHERISealedCapabilityConversion;
+        return Compatible;
       } else {
         if (Context.hasCvrSimilarType(RHSType, LHSType))
           Kind = CK_NoOp;
@@ -9124,6 +9173,20 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
 
     // int -> T*
     if (RHSType->isIntegerType()) {
+      // Need to seal integer constants if LHS is sealed
+      if (LHSPointer->getSealingType() != 0) {
+        QualType IntermediaryType =
+            Context.getPointerType(LHSPointer->getPointeeType(),
+                                   LHSPointer->getPointerInterpretation(), 0);
+        Sema::AssignConvertType result =
+            CheckAssignmentConstraints(IntermediaryType, RHS, Kind);
+        if (result != Compatible)
+          return result;
+        if (Kind != CK_NoOp && ConvertRHS)
+          RHS = ImpCastExprToType(RHS.get(), IntermediaryType, Kind);
+        Kind = CK_CHERISealedCapabilityConversion;
+        return Compatible;
+      }
       bool RHSIsNull =
           RHS.get()->isNullPointerConstant(
               Context, Expr::NPC_ValueDependentIsNotNull) != Expr::NPCK_NotNull;
@@ -9462,8 +9525,13 @@ Sema::CheckSingleAssignmentConstraints(QualType LHSType, ExprResult &CallerRHS,
       CXXCastPath Path;
       CheckPointerConversion(RHS.get(), LHSType, Kind, Path,
                              /*IgnoreBaseAccess=*/false, Diagnose);
-      if (ConvertRHS)
-        RHS = ImpCastExprToType(RHS.get(), LHSType, Kind, VK_RValue, &Path);
+      if (ConvertRHS) {
+        QualType IntermediaryType =
+            Context.getPointerType(LHSType->castAs<PointerType>()->getPointeeType(),
+                                   LHSType->castAs<PointerType>()->getPointerInterpretation(), 0);
+        RHS = ImpCastExprToType(ImpCastExprToType(RHS.get(), IntermediaryType, Kind,
+                              VK_RValue, &Path).get(), LHSType, CK_CHERISealedCapabilityConversion);
+      }
     }
     return Compatible;
   }
@@ -13593,7 +13661,7 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
   CheckAddressOfPackedMember(op);
 
   PointerInterpretationKind PIK = pointerKindForBaseExpr(Context, op);
-  return Context.getPointerType(op->getType(), PIK);
+  return Context.getPointerType(op->getType(), PIK, 0);
 }
 
 static void RecordModifiableNonNullParam(Sema &S, const Expr *Exp) {
@@ -16069,6 +16137,14 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
                                     std::string(PtrToCap ? "to" : "from") +
                                     "cap " + DstType.getAsString() + ")");
     Diag(Loc, DiagKind) << SrcType << DstType << false << Hint;
+    if (Complained)
+      *Complained = true;
+    return true;
+  }
+  case IncompatibleNestedCHERISealingTypes: {
+    isInvalid = true;
+    Diag(Loc, diag::err_typecheck_incompatible_nested_sealing_types)
+        << SrcType << DstType << false << false;
     if (Complained)
       *Complained = true;
     return true;

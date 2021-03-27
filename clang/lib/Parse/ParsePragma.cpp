@@ -256,6 +256,16 @@ private:
   Sema &Actions;
 };
 
+struct PragmaPointerSealingMode : public PragmaHandler {
+public:
+  PragmaPointerSealingMode(Sema &Actions)
+      : PragmaHandler("pointer_sealing"), Actions(Actions) {}
+  void HandlePragma(Preprocessor &PP, PragmaIntroducer Introducer,
+                    Token &FirstToken) override;
+private:
+  Sema &Actions;
+};
+
 struct PragmaMSRuntimeChecksHandler : public EmptyPragmaHandler {
   PragmaMSRuntimeChecksHandler() : EmptyPragmaHandler("runtime_checks") {}
 };
@@ -365,6 +375,9 @@ void Parser::initializePragmaHandlers() {
   PointerInterpretationHandler = std::make_unique<PragmaPointerInterpretation>(Actions);
   PP.AddPragmaHandler(PointerInterpretationHandler.get());
 
+  PointerSealingModeHandler = std::make_unique<PragmaPointerSealingMode>(Actions);
+  PP.AddPragmaHandler(PointerSealingModeHandler.get());
+
   if (getLangOpts().MicrosoftExt ||
       getTargetInfo().getTriple().isOSBinFormatELF()) {
     MSCommentHandler = std::make_unique<PragmaCommentHandler>(Actions);
@@ -451,6 +464,8 @@ void Parser::resetPragmaHandlers() {
   OptionsHandler.reset();
   PP.RemovePragmaHandler(PointerInterpretationHandler.get());
   PointerInterpretationHandler.reset();
+  PP.RemovePragmaHandler(PointerSealingModeHandler.get());
+  PointerSealingModeHandler.reset();
   PP.RemovePragmaHandler(PackHandler.get());
   PackHandler.reset();
   PP.RemovePragmaHandler(MSStructHandler.get());
@@ -3307,6 +3322,53 @@ void PragmaPointerInterpretation::HandlePragma(Preprocessor &PP,
   if (Tok.isNot(tok::eod))
     PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
         << "pointer_interpretation";
+}
+
+void PragmaPointerSealingMode::HandlePragma(Preprocessor &PP,
+                                               PragmaIntroducer Introducer,
+                                               Token &Tok) {
+  PP.Lex(Tok);
+  if (Tok.is(tok::eod)) {
+    PP.Diag(Tok.getLocation(), diag::err_pragma_missing_argument)
+        << "pointer_sealing" << /*Expected=*/true
+        << "'push', 'pop', 'default', 'sealed' or 'unsealed'";
+    return;
+  }
+  if (Tok.isNot(tok::identifier) && Tok.isNot(tok::kw_default)) {
+    PP.Diag(Tok.getLocation(),
+            // TODO: dz308: add separate diagnostic (different from pointer interpretation
+            diag::err_pragma_pointer_interpretation_invalid_argument)
+        << PP.getSpelling(Tok);
+    return;
+  }
+
+  IdentifierInfo *ArgumentIdentifier = Tok.getIdentifierInfo();
+  if (ArgumentIdentifier->getName() == "push")
+    Actions.ActOnPragmaPointerSealingModePush();
+  else if (ArgumentIdentifier->getName() == "pop")
+    Actions.ActOnPragmaPointerSealingModePop();
+  else {
+    int sealing =
+        llvm::StringSwitch<int>(ArgumentIdentifier->getName())
+            .Case("sealed", 1)
+            .Case("unsealed", 0)
+            .Default(-1);
+    if (sealing == -1) {
+      PP.Diag(Tok.getLocation(),
+            // TODO: dz308: add separate diagnostic (different from pointer interpretation
+              diag::err_pragma_pointer_interpretation_invalid_argument)
+          << PP.getSpelling(Tok);
+      return;
+    }
+    Actions.ActOnPragmaPointerSealingMode((sealing == 1) ?
+                  Sema::CHERIPointerSealingMode::AutoSealed :
+                  Sema::CHERIPointerSealingMode::AutoUnsealed);
+  }
+
+  PP.Lex(Tok);
+  if (Tok.isNot(tok::eod))
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_extra_tokens_at_eol)
+        << "pointer_sealing";
 }
 
 /// Handle the Microsoft \#pragma intrinsic extension.
