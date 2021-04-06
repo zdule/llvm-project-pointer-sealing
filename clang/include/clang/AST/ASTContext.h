@@ -382,6 +382,9 @@ class ASTContext : public RefCountedBase<ASTContext> {
   
   mutable RecordDecl *CHERIClassDecl = nullptr;
 
+  // Record declaration for Cheri cast checking allocation descriptor
+  mutable RecordDecl *CHERICastAllocDescDecl = nullptr;
+
   /// The type for the C FILE type.
   TypeDecl *FILEDecl = nullptr;
 
@@ -1898,6 +1901,11 @@ public:
   RecordDecl *getCHERIClassDecl() const;
   QualType getCHERIClassType() const {
     return getTypeDeclType(getCHERIClassDecl());
+  }
+
+  RecordDecl *getCHERICastAllocDescDecl() const;
+  QualType getCHERICastAllocDescType() const {
+    return getTypeDeclType(getCHERICastAllocDescDecl());
   }
 
   /// Retrieve the Objective-C class declaration corresponding to

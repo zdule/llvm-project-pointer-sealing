@@ -2013,6 +2013,17 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
     TheCall->setType(ResType);
     break;
   }
+  case Builtin::BI__builtin_cheri_tagged_malloc: {
+    // Take any pointer type as the second argument
+    QualType InTy;
+
+    if (checkArgCount(*this, TheCall, 2) ||
+        checkBuiltinArgument(*this, TheCall, 0) ||
+        checkCapArg(*this, TheCall, 1, &InTy))
+      return ExprError();
+    TheCall->setType(Context.getPointerType(Context.VoidTy, PIK_Capability, 0));
+    break;
+  }
   case Builtin::BI__builtin_cheri_cap_build: {
     // CBuildCap takes the authorizing capability as the first argument and
     // the raw bits (a __uintcap_t) that should become tagged second.

@@ -7838,6 +7838,57 @@ RecordDecl *ASTContext::getCHERIClassDecl() const {
   return CHERIClassDecl;
 }
 
+RecordDecl *ASTContext::getCHERICastAllocDescDecl() const {
+  if (!CHERICastAllocDescDecl) {
+    auto constructRecord = [](const ASTContext &ctx, const char *name, TagTypeKind ttk, int nfields,
+                              std::vector<const char*> names, std::vector<QualType> types, std::vector<Expr*> bws) {
+      RecordDecl *RD = ctx.buildImplicitRecord(name, ttk);
+      RD->startDefinition();
+      for (int i = 0; i < nfields; ++i) {
+        FieldDecl *Field = FieldDecl::Create(
+            ctx, RD, SourceLocation(), SourceLocation(),
+            &ctx.Idents.get(names[i]), types[i], /*TInfo=*/nullptr,
+            bws[i], /*Mutable=*/false, ICIS_NoInit);
+        Field->setAccess(AS_public);
+        RD->addDecl(Field);
+      }
+      RD->completeDefinition();
+      assert(RD != nullptr && "Not null here");
+      return RD;
+    };
+    Expr * const BW1 = IntegerLiteral::Create(*this, llvm::APInt(32,1), UnsignedIntTy, SourceLocation());
+    Expr * const BW3 = IntegerLiteral::Create(*this, llvm::APInt(32,3), UnsignedIntTy, SourceLocation());
+    Expr * const BW20 = IntegerLiteral::Create(*this, llvm::APInt(32,20), UnsignedIntTy, SourceLocation());
+
+    RecordDecl *InternalEntry = constructRecord(*this, "__cheri_alloc_internal_entry",
+                                             TTK_Struct, 3, {"external", "multiplicity", "type"},
+                                             {UnsignedIntTy, UnsignedIntTy, UnsignedIntTy},
+                                             {BW1, BW3, BW20});
+    RecordDecl *ExternalEntry = constructRecord(*this, "__cheri_alloc_external_entry",
+                                             TTK_Struct, 3, {"external", "multiplicity", "type"},
+                                           {UnsignedIntTy, UnsignedIntTy, UnsignedIntTy},
+                                            {BW1, BW3, BW20});
+    assert(InternalEntry != nullptr && "Not null here");
+    assert(ExternalEntry != nullptr && "Not null here");
+    RecordDecl *TableEntry = constructRecord(*this, "__cheri_alloc_table_entry",
+                                                TTK_Union, 2, {"internal_entry", "external_entry"},
+                                                {getTypeDeclType(InternalEntry), getTypeDeclType(ExternalEntry)},
+                                                {nullptr, nullptr});
+    assert(TableEntry != nullptr && "Not null here");
+    QualType SizeTy = getSizeType();
+    QualType EntryArrayTy = getIncompleteArrayType(getTypeDeclType(TableEntry),
+                                                   ArrayType::ArraySizeModifier::Normal, 0);
+    RecordDecl *AllocationDescription = constructRecord(*this, "__cheri_alloc_description",
+                                             TTK_Struct, 4, {"repeat_offset", "repeat_size", "external_entries_start", "entries"},
+                                             {SizeTy, SizeTy, SizeTy, EntryArrayTy},
+                                             {nullptr, nullptr, nullptr, nullptr});
+    assert(AllocationDescription != nullptr && "Not null here");
+
+    CHERICastAllocDescDecl = AllocationDescription;
+  }
+  return CHERICastAllocDescDecl;
+}
+
 ObjCInterfaceDecl *ASTContext::getObjCProtocolDecl() const {
   if (!ObjCProtocolClassDecl) {
     ObjCProtocolClassDecl

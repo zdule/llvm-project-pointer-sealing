@@ -49,6 +49,7 @@ add_clang_library(clangCodeGen
   CGCXX.cpp
   CGCXXABI.cpp
   CGCall.cpp
+  CGCheriCast.cpp
   CGClass.cpp
   CGCleanup.cpp
   CGCoroutine.cpp

@@ -13,6 +13,7 @@
 #include "CGCXXABI.h"
 #include "CGObjCRuntime.h"
 #include "CGOpenCLRuntime.h"
+#include "CGCheriCast.h"
 #include "CGRecordLayout.h"
 #include "CodeGenFunction.h"
 #include "CodeGenModule.h"
@@ -3935,7 +3936,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       return RValue::get(llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy));
     break;
   }
-
   case Builtin::BI__builtin_cheri_convert_sealed_capabilities: {
     Value *InCap = Builder.CreateBitCast(EmitScalarExpr(E->getArg(0)), VoidCheriCapTy);
     unsigned OldSealingType = E->getArg(0)->getType()->castAs<PointerType>()
@@ -3965,6 +3965,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
                                       {InCap, SealCap});
     }
     return RValue::get(Builder.CreateBitCast(InCap, ConvertType(E->getType())));
+  }
+  case Builtin::BI__builtin_cheri_tagged_malloc: {
+    Value *size = EmitScalarExpr(E->getArg(0));
+    QualType T = E->getArg(1)->getType()->castAs<PointerType>()->getPointeeType();
+    std::string name = GetOrCreateGlobalAllocDescriptor(CGM, T);
+    return RValue();
   }
 
   case Builtin::BI__builtin_cheri_cap_from_pointer: {
