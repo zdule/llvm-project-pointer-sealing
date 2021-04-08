@@ -223,6 +223,7 @@ static std::string getStaticDeclName(CodeGenModule &CGM, const VarDecl &D) {
   return ContextName;
 }
 
+// TODO: dz308: Add type information
 llvm::Constant *CodeGenModule::getOrCreateStaticVarDecl(
     const VarDecl &D, llvm::GlobalValue::LinkageTypes Linkage) {
   // In general, we don't always emit static var decls once before we reference
@@ -1091,6 +1092,7 @@ static llvm::Constant *constWithPadding(CodeGenModule &CGM, IsPattern isPattern,
   return constant;
 }
 
+// TODO: dz308: add type data?
 Address CodeGenModule::createUnnamedGlobalFrom(const VarDecl &D,
                                                llvm::Constant *Constant,
                                                CharUnits Align) {
@@ -1140,7 +1142,7 @@ Address CodeGenModule::createUnnamedGlobalFrom(const VarDecl &D,
 
   return Address(CacheEntry, Align);
 }
-
+// TODO: dz308: add type data?
 static Address createUnnamedGlobalForMemcpyFrom(CodeGenModule &CGM,
                                                 const VarDecl &D,
                                                 CGBuilderTy &Builder,
@@ -1510,6 +1512,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
         allocaAlignment = alignment;
       }
 
+      // TODO: dz308: add type info?
       // Create the alloca.  Note that we set the name separately from
       // building the instruction so that it's there even in no-asserts
       // builds.
@@ -1574,6 +1577,7 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     auto VlaSize = getVLASize(Ty);
     llvm::Type *llvmTy = ConvertTypeForMem(VlaSize.Type);
 
+    // TODO: dz308: add type info? What about lifetime markers?, Modify CreateTempAlloca
     // Allocate memory for the array.
     address = CreateTempAlloca(llvmTy, alignment, "vla", VlaSize.NumElts,
                                &AllocaAddr);
@@ -2464,6 +2468,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
       DeclPtr = OpenMPLocalAddr;
     } else {
       // Otherwise, create a temporary to hold the value.
+      // TODO: dz308: add type info? Better add type info to create memtemp
       DeclPtr = CreateMemTemp(Ty, getContext().getDeclAlign(&D),
                               D.getName() + ".addr");
     }

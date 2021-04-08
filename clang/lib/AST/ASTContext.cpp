@@ -1481,6 +1481,8 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target,
     MSGuidTagDecl = buildImplicitRecord("_GUID");
     TUDecl->addDecl(MSGuidTagDecl);
   }
+
+  getCHERICastAllocDescDecl();
 }
 
 DiagnosticsEngine &ASTContext::getDiagnostics() const {
@@ -7856,27 +7858,9 @@ RecordDecl *ASTContext::getCHERICastAllocDescDecl() const {
       assert(RD != nullptr && "Not null here");
       return RD;
     };
-    Expr * const BW1 = IntegerLiteral::Create(*this, llvm::APInt(32,1), UnsignedIntTy, SourceLocation());
-    Expr * const BW3 = IntegerLiteral::Create(*this, llvm::APInt(32,3), UnsignedIntTy, SourceLocation());
-    Expr * const BW20 = IntegerLiteral::Create(*this, llvm::APInt(32,20), UnsignedIntTy, SourceLocation());
-
-    RecordDecl *InternalEntry = constructRecord(*this, "__cheri_alloc_internal_entry",
-                                             TTK_Struct, 3, {"external", "multiplicity", "type"},
-                                             {UnsignedIntTy, UnsignedIntTy, UnsignedIntTy},
-                                             {BW1, BW3, BW20});
-    RecordDecl *ExternalEntry = constructRecord(*this, "__cheri_alloc_external_entry",
-                                             TTK_Struct, 3, {"external", "multiplicity", "type"},
-                                           {UnsignedIntTy, UnsignedIntTy, UnsignedIntTy},
-                                            {BW1, BW3, BW20});
-    assert(InternalEntry != nullptr && "Not null here");
-    assert(ExternalEntry != nullptr && "Not null here");
-    RecordDecl *TableEntry = constructRecord(*this, "__cheri_alloc_table_entry",
-                                                TTK_Union, 2, {"internal_entry", "external_entry"},
-                                                {getTypeDeclType(InternalEntry), getTypeDeclType(ExternalEntry)},
-                                                {nullptr, nullptr});
-    assert(TableEntry != nullptr && "Not null here");
     QualType SizeTy = getSizeType();
-    QualType EntryArrayTy = getIncompleteArrayType(getTypeDeclType(TableEntry),
+    // Note its not guaranteed that an int type 32 bits wide exists. I hope it does
+    QualType EntryArrayTy = getIncompleteArrayType(getIntTypeForBitwidth(32, false),
                                                    ArrayType::ArraySizeModifier::Normal, 0);
     RecordDecl *AllocationDescription = constructRecord(*this, "__cheri_alloc_description",
                                              TTK_Struct, 4, {"repeat_offset", "repeat_size", "external_entries_start", "entries"},
@@ -7884,6 +7868,7 @@ RecordDecl *ASTContext::getCHERICastAllocDescDecl() const {
                                              {nullptr, nullptr, nullptr, nullptr});
     assert(AllocationDescription != nullptr && "Not null here");
 
+    AllocationDescription->setHasFlexibleArrayMember(true);
     CHERICastAllocDescDecl = AllocationDescription;
   }
   return CHERICastAllocDescDecl;

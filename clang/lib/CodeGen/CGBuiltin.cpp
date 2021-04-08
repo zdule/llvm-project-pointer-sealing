@@ -3969,8 +3969,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   case Builtin::BI__builtin_cheri_tagged_malloc: {
     Value *size = EmitScalarExpr(E->getArg(0));
     QualType T = E->getArg(1)->getType()->castAs<PointerType>()->getPointeeType();
-    std::string name = GetOrCreateGlobalAllocDescriptor(CGM, T);
-    return RValue();
+    llvm::GlobalVariable *AllocDescriptor = GetOrCreateGlobalAllocDescriptor(CGM, T);
+    //return RValue::getIgnored();
+    Value *CastDescriptor = Builder.CreateBitCast(AllocDescriptor,VoidPtrTy);
+
+    llvm::FunctionType * TaggedMallocType = llvm::FunctionType::get(VoidPtrTy,std::array<llvm::Type*,2>{SizeTy, VoidPtrTy}, false);
+    llvm::Function *TaggedMallocFun = llvm::Function::Create(TaggedMallocType, llvm::GlobalValue::ExternalLinkage, 200, "__cheri_tagged_malloc", &CGM.getModule());
+    return RValue::get(Builder.CreateCall(TaggedMallocType,TaggedMallocFun,{size,CastDescriptor}));
   }
 
   case Builtin::BI__builtin_cheri_cap_from_pointer: {

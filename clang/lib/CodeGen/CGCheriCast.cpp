@@ -32,6 +32,10 @@ struct InternalEntry
   bool External;
   unsigned Multiplicity;
   unsigned Type;
+  uint32_t getValue()
+  {
+    return (External << 31) | (Multiplicity << 28) | Type;
+  }
 };
 
 struct ExternalEntry
@@ -39,6 +43,10 @@ struct ExternalEntry
   bool Final;
   unsigned Offset;
   unsigned Type;
+  uint32_t getValue()
+  {
+    return (Final << 31) | (Offset << 28) | Type;
+  }
 };
 
 const unsigned BytesInBucket = 4;
@@ -68,14 +76,14 @@ static void appendContainedTypeOffsets(CodeGenModule &CGM, const clang::Type *Ty
     // pass
   }
   else if (Type->isRecordType()) {
-    RecordDecl *Rec = cast<RecordType>(Type)->getDecl();
+    RecordDecl *Rec = Type->getAsRecordDecl();
     Rec = Rec->getDefinition();
     if (Rec == nullptr)
         llvm_unreachable("Found undefined record type");
     const ASTRecordLayout &Layout = Context.getASTRecordLayout(Rec);
     for (FieldDecl *f : Rec->fields())
       appendContainedTypeOffsets(CGM, f->getType().getTypePtrOrNull(),
-                                 Layout.getFieldOffset(f->getFieldIndex())/CGM.getTarget().getCharWidth(), desc);
+                                 startOffset + Layout.getFieldOffset(f->getFieldIndex())/CGM.getTarget().getCharWidth(), desc);
   }
   else if (Type->isArrayType())
   {
@@ -186,6 +194,7 @@ static APValue intValue(unsigned bits, unsigned val)
 
 static APValue convertAllocDescToAPValue(CodeGenModule &CGM, AllocationDescription &desc)
 {
+  /*
   RecordDecl *AllocDescDecl = CGM.getContext().getCHERICastAllocDescDecl();
   auto FieldIt = AllocDescDecl->field_begin();
   std::advance(FieldIt,3);
@@ -193,10 +202,12 @@ static APValue convertAllocDescToAPValue(CodeGenModule &CGM, AllocationDescripti
       getElementType()->castAs<RecordType>()->getDecl();
   const FieldDecl *InternalEntryDecl = *UnionDecl->field_begin();
   const FieldDecl *ExternalEntryDecl = *(++(UnionDecl->field_begin()));
+  */
 
   APValue Value(APValue::UninitStruct(), 0, 4);
   // In bits
   uint64_t TargetSizeTWidth = CGM.getContext().getTypeSize(CGM.getContext().getSizeType());
+  uint64_t UnsignedIntSize = CGM.getTarget().getIntWidth();
 
   Value.getStructField(0) = APValue(APSInt(APInt(TargetSizeTWidth, desc.repeatOffset)));
   Value.getStructField(1) = APValue(APSInt(APInt(TargetSizeTWidth, desc.repeatSize)));
@@ -208,23 +219,30 @@ static APValue convertAllocDescToAPValue(CodeGenModule &CGM, AllocationDescripti
 
   for (int i = 0; i < desc.internal.size(); i++)
   {
+    FieldsValue.getArrayInitializedElt(i) = intValue(32, desc.internal[i].getValue());
+    /*
     APValue &ElValue = FieldsValue.getArrayInitializedElt(i);
     ElValue = APValue(InternalEntryDecl);
     APValue &InternalStruct = ElValue.getUnionValue();
-    InternalStruct = APValue(APValue::UninitStruct{}, 0, 3);
-    InternalStruct.getStructField(0) = intValue(1, desc.internal[i].External);
-    InternalStruct.getStructField(1) = intValue(3, desc.internal[i].Multiplicity);
-    InternalStruct.getStructField(2) = intValue(20, desc.internal[i].Type);
+    InternalStruct = APValue(APValue::UninitStruct{}, 0, 1);
+    InternalStruct.getStructField(0) = intValue(UnsignedIntSize, desc.internal[i].External);
+    InternalStruct.getStructField(1) = intValue(UnsignedIntSize, desc.internal[i].Multiplicity);
+    InternalStruct.getStructField(2) = intValue(UnsignedIntSize, desc.internal[i].Type);
+     */
   }
   for (int i = 0; i < desc.external.size(); i++)
   {
+    FieldsValue.getArrayInitializedElt(desc.internal.size()+i) =
+        intValue(UnsignedIntSize, desc.external[i].getValue());
+    /*
     APValue &ElValue = FieldsValue.getArrayInitializedElt(desc.internal.size()+i);
     ElValue = APValue(ExternalEntryDecl);
     APValue &InternalStruct = ElValue.getUnionValue();
     InternalStruct = APValue(APValue::UninitStruct{}, 0, 3);
-    InternalStruct.getStructField(0) = intValue(1, desc.external[i].Final);
-    InternalStruct.getStructField(1) = intValue(3, desc.external[i].Offset);
-    InternalStruct.getStructField(2) = intValue(20, desc.external[i].Type);
+    InternalStruct.getStructField(0) = intValue(UnsignedIntSize, desc.external[i].Final);
+    InternalStruct.getStructField(1) = intValue(UnsignedIntSize, desc.external[i].Offset);
+    InternalStruct.getStructField(2) = intValue(UnsignedIntSize, desc.external[i].Type);
+     */
   }
 
   Value.printPretty(llvm::outs(), CGM.getContext(), CGM.getContext().getCHERICastAllocDescType());
@@ -244,23 +262,21 @@ static APValue createAllocDescStruct(CodeGenModule &CGM, QualType Type)
   return convertAllocDescToAPValue(CGM, desc);
 }
 
-std::string GetOrCreateGlobalAllocDescriptor(CodeGenModule &CGM, QualType Type)
+llvm::GlobalVariable *GetOrCreateGlobalAllocDescriptor(CodeGenModule &CGM, QualType Type)
 {
   auto &M = CGM.getModule();
   std::ostringstream Name("__cheri_allocation_tag_");
   Name << Type.getTypePtr();
   auto *GlobalDesc = M.getNamedGlobal(Name.str());
   if (GlobalDesc)
-    return Name.str();
+    return GlobalDesc;
   QualType DescType = CGM.getContext().getCHERICastAllocDescType();
-  llvm::Type *GlobalType = CGM.getTypes().ConvertTypeForMem(DescType, false);
   ConstantEmitter CE(CGM);
   APValue Value = createAllocDescStruct(CGM, Type);
-  Constant *DescConst = CE.tryEmitAbstract(Value, DescType);
-  new llvm::GlobalVariable(
-      M, GlobalType,
+  Constant *DescConst = CE.tryEmitAbstractForMemory(Value, DescType);
+  return new llvm::GlobalVariable(
+      M, DescConst->getType(),
       true, llvm::GlobalValue::ExternalLinkage,  DescConst,
-      "__cheri_sealing_capability", nullptr,
+      Name.str(), nullptr,
       llvm::GlobalValue::NotThreadLocal, 200);
-  return Name.str();
 }

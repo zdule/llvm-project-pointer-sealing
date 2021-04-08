@@ -16,6 +16,7 @@
 
 #include "clang/AST/Type.h"
 
+#include <llvm/IR/GlobalVariable.h>
 #include <string>
 
 namespace clang {
@@ -25,6 +26,7 @@ namespace clang {
   }
 }
 
-std::string GetOrCreateGlobalAllocDescriptor(clang::CodeGen::CodeGenModule &CGM, clang::QualType Type);
+llvm::GlobalVariable *
+GetOrCreateGlobalAllocDescriptor(clang::CodeGen::CodeGenModule &CGM, clang::QualType Type);
 
 #endif // LLVM_CGCHERICAST_H

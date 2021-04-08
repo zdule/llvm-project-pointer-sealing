@@ -76,6 +76,7 @@ Address CodeGenFunction::CreateTempAllocaWithoutCast(llvm::Type *Ty,
 
 /// CreateTempAlloca - This creates a alloca and inserts it into the entry
 /// block. The alloca is casted to default address space if necessary.
+// TODO: dz308: add type info, everyone calls this to allocate temporary memory, no QualType here?
 Address CodeGenFunction::CreateTempAlloca(llvm::Type *Ty, CharUnits Align,
                                           const Twine &Name,
                                           llvm::Value *ArraySize,
@@ -146,6 +147,8 @@ Address CodeGenFunction::CreateMemTemp(QualType Ty, const Twine &Name,
   return CreateMemTemp(Ty, getContext().getTypeAlignInChars(Ty), Name, Alloca);
 }
 
+// TODO: dz308: add type info? To all these functions
+// Maybe use a var.annotation (var_annotation)?
 Address CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
                                        const Twine &Name, Address *Alloca) {
   Address Result = CreateTempAlloca(ConvertTypeForMem(Ty), Align, Name,
