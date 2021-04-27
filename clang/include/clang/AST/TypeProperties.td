@@ -24,11 +24,11 @@ let Class = PointerType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
-  def : Property<"SealingType", UInt32> {
-      let Read = [{ node->getSealingType() }];
+  def : Property<"sealingKind", PointerSealingKind> {
+      let Read = [{ node->getSealingKind() }];
   }
 
-  def : Creator<[{ return ctx.getPointerType(pointeeType, pointerInterpretation, SealingType); }]>;
+  def : Creator<[{ return ctx.getPointerType(pointeeType, pointerInterpretation, sealingKind); }]>;
 }
 
 let Class = AdjustedType in {
@@ -67,8 +67,8 @@ let Class = ReferenceType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
-  def : Property<"SealingType", UInt32> {
-        let Read = [{ node->getSealingType() }];
+  def : Property<"sealingKind", PointerSealingKind> {
+        let Read = [{ node->getSealingKind() }];
    }
 }
 
@@ -81,7 +81,7 @@ let Class = LValueReferenceType in {
     return ctx.getLValueReferenceType(pointeeTypeAsWritten,
                                       isSpelledAsLValue,
                                       pointerInterpretation,
-                                      SealingType);
+                                      sealingKind);
   }]>;
 }
 
@@ -89,7 +89,7 @@ let Class = RValueReferenceType in {
   def : Creator<[{
     return ctx.getRValueReferenceType(pointeeTypeAsWritten,
                                       pointerInterpretation,
-                                      SealingType);
+                                      sealingKind);
   }]>;
 }
 
@@ -642,15 +642,15 @@ let Class = DependentPointerType in {
   def : Property<"pointerInterpretation", PointerInterpretationKind> {
     let Read = [{ node->getPointerInterpretation() }];
   }
-  def : Property<"SealingType", UInt32> {
-      let Read = [{ node->getSealingType() }];
+  def : Property<"sealingKind", PointerSealingKind> {
+      let Read = [{ node->getSealingKind() }];
    }
   def : Property<"qualifierLoc", SourceLocation> {
     let Read = [{ node->getQualifierLoc() }];
   }
 
   def : Creator<[{
-    return ctx.getDependentPointerType(pointerType, pointerInterpretation, SealingType,
+    return ctx.getDependentPointerType(pointerType, pointerInterpretation, sealingKind,
                                        qualifierLoc);
   }]>;
 }

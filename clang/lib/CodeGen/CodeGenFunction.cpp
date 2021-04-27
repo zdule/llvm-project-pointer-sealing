@@ -255,6 +255,9 @@ TypeEvaluationKind CodeGenFunction::getEvaluationKind(QualType type) {
     case Type::ObjCObjectPointer:
     case Type::Pipe:
     case Type::ExtInt:
+      if (const PointerType *PT = type->getAs<PointerType>())
+        if (PT->getSealingKind() == PSK_DynamicUnsealed)
+          return TEK_DynamicUnsealed;
       return TEK_Scalar;
 
     // Complexes.
@@ -2568,4 +2571,24 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
     return DI->SourceLocToDebugLoc(Location);
 
   return llvm::DebugLoc();
+}
+
+llvm::Value *CodeGenFunction::GetOrCreateSealingCap()
+{
+  llvm::Module &M = CGM.getModule();
+  llvm::GlobalVariable *SealCapGlobal = M.getNamedGlobal("__cheri_sealing_capability");
+  if (!SealCapGlobal) {
+    SealCapGlobal = new llvm::GlobalVariable(M, VoidCheriCapTy,
+                                             false, llvm::GlobalValue::ExternalLinkage,
+                                             nullptr, "__cheri_sealing_capability",
+                                             nullptr, llvm::GlobalValue::NotThreadLocal,
+                                             200);
+    const ASTContext &Context = getContext();
+    QualType VoidCapTy = Context.getPointerType(Context.VoidTy, PIK_Capability, PSK_Unsealed);
+    SealCapGlobal->setAlignment(llvm::MaybeAlign(Context.getAlignOfGlobalVarInChars(VoidCapTy).getQuantity()));
+  }
+  llvm::Value *SealCap =
+      Builder.CreateLoad(Address(SealCapGlobal,
+                                 CharUnits::fromQuantity(SealCapGlobal->getAlignment())));
+  return SealCap;
 }

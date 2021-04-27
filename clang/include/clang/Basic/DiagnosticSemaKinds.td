@@ -3065,6 +3065,8 @@ def err_swift_abi_parameter_wrong_type : Error<
   "'%0' parameter must have pointer%select{| to unqualified pointer}1 type; "
   "type here is %2">;
 
+def err_attribute_argument_invalid_choice : Error<
+  "%0 attribute argument is invalid: allowed choices are %1 but value '%2' encountered">;
 def err_attribute_argument_invalid : Error<
   "%0 attribute argument is invalid: %select{max must be 0 since min is 0|"
   "min must not be greater than max}1">;
@@ -6659,9 +6661,17 @@ def err_typecheck_convert_ptr_to_cap: Error<"converting non-capability"
 def err_typecheck_convert_ptr_to_cap_unrelated_type: Error<"cannot implicitly "
   "or explicitly convert non-capability%select{| reference to}2 type %0 to "
   "unrelated capability type %1">;
+def warn_unknown_malloc_type: Warning<"Unknown type of allocated object">;
 def err_typecheck_incompatible_nested_sealing_types: Error<"converting capability "
   "%select{| reference}2 type %0 to capability %select{| reference}3 type %1 with "
   "incompatible nested sealing types">;
+def err_invalid_conversion_from_unsealed: Error<"converting an unsealed "
+  "capability to a trusted capability is not allowed">;
+def err_invalid_conversion_between_sealing_kinds: Error<"converting a %select{statically|dynamically}0"
+  "sealed capability to a %select{dynamically|statically}0 "
+  "sealed capability">;
+
+
 
 def warn_uintcap_bitwise_and : Warning<
   "using bitwise and on a capability type may give surprising results; "

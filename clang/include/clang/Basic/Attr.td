@@ -2129,6 +2129,24 @@ def CHERISealedPointer : TypeAttr {
   let Spellings = [GNU<"cheri_sealed_pointer">,
                    CXX11<"cheri","sealed_pointer">,
                    C2x<"cheri", "sealed_pointer">];
+  let Args = [EnumArgument<"SealingKind", "SealingKindEnum",
+                ["unsealed", "syntactic", "dynamic"], ["Unsealed", "Static", "Dynamic"]>];
+  let Documentation = [Undocumented]; // FIXME
+}
+
+def CHERITaggedMalloc : DeclOrTypeAttr {
+  let Spellings = [GNU<"cheri_tagged_malloc">,
+                   CXX11<"cheri","tagged_malloc">,
+                   C2x<"cheri", "tagged_malloc">];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
+  let Documentation = [Undocumented]; // FIXME
+}
+
+def CHERITaggedFree : DeclOrTypeAttr {
+  let Spellings = [GNU<"cheri_tagged_free">,
+                   CXX11<"cheri","tagged_free">,
+                   C2x<"cheri", "tagged_free">];
+  let Subjects = SubjectList<[Function], ErrorDiag>;
   let Documentation = [Undocumented]; // FIXME
 }
 

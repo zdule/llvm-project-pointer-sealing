@@ -559,7 +559,7 @@ QualType ArgType::getRepresentativeType(ASTContext &C) const {
       Res = C.VoidPtrTy;
       break;
     case CCapabilityTy:
-      Res = C.getPointerType(C.VoidTy, PIK_Capability, 0);
+      Res = C.getPointerType(C.VoidTy, PIK_Capability, PSK_Unsealed);
       break;
     case WIntTy: {
       Res = C.getWIntType();

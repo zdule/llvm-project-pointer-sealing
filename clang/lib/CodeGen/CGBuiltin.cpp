@@ -3935,7 +3935,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
             CGM.getCXXABI().getThrowInfo(FD->getParamDecl(0)->getType()))
       return RValue::get(llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy));
     break;
-  }
+  } /*
   case Builtin::BI__builtin_cheri_convert_sealed_capabilities: {
     Value *InCap = Builder.CreateBitCast(EmitScalarExpr(E->getArg(0)), VoidCheriCapTy);
     unsigned OldSealingType = E->getArg(0)->getType()->castAs<PointerType>()
@@ -3965,17 +3965,30 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
                                       {InCap, SealCap});
     }
     return RValue::get(Builder.CreateBitCast(InCap, ConvertType(E->getType())));
+  } */
+  case Builtin::BI__builtin_cheri_trust_capability: {
+    assert(E->getArg(0)->getType()->castAs<PointerType>()->getSealingKind() == PSK_Unsealed);
+    const PointerType *ResTy = E->getType()->castAs<PointerType>();
+    PointerSealingKind ResPSK = ResTy->getSealingKind();
+    llvm::Type *ResLLVMTy = ConvertType(E->getArg(0)->getType());
+
+    Value *InCap = EmitScalarExpr(E->getArg(0));
+    if (ResPSK == PSK_StaticUnsealed) {
+      EmitStaticUnsealedTypeCheck(*this, InCap, ResTy);
+      return RValue::get(Builder.CreateBitCast(InCap, ResLLVMTy));
+    }
+    else if (ResPSK == PSK_DynamicUnsealed) {
+      Value *OType = EmitOtype(CGM, ResTy->getPointeeType());
+      return RValue::getComplex(Builder.CreateBitCast(InCap, ResLLVMTy), OType);
+    }
+  }
+  case Builtin::BI__builtin_cheri_get_type_tag: {
+    Value *OType = EmitOtype(CGM, E->getArg(0)->getType()->getPointeeType());
+    return RValue::get(OType);
   }
   case Builtin::BI__builtin_cheri_tagged_malloc: {
-    Value *size = EmitScalarExpr(E->getArg(0));
     QualType T = E->getArg(1)->getType()->castAs<PointerType>()->getPointeeType();
-    llvm::GlobalVariable *AllocDescriptor = GetOrCreateGlobalAllocDescriptor(CGM, T);
-    //return RValue::getIgnored();
-    Value *CastDescriptor = Builder.CreateBitCast(AllocDescriptor,VoidPtrTy);
-
-    llvm::FunctionType * TaggedMallocType = llvm::FunctionType::get(VoidPtrTy,std::array<llvm::Type*,2>{SizeTy, VoidPtrTy}, false);
-    llvm::Function *TaggedMallocFun = llvm::Function::Create(TaggedMallocType, llvm::GlobalValue::ExternalLinkage, 200, "__cheri_tagged_malloc", &CGM.getModule());
-    return RValue::get(Builder.CreateCall(TaggedMallocType,TaggedMallocFun,{size,CastDescriptor}));
+    return EmitTaggedMalloc(*this, E->getArg(0), T, E->getType()->castAs<PointerType>()->getSealingKind());
   }
 
   case Builtin::BI__builtin_cheri_cap_from_pointer: {

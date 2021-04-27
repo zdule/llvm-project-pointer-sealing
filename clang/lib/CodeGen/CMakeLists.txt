@@ -63,6 +63,7 @@ add_clang_library(clangCodeGen
   CGExprComplex.cpp
   CGExprConstant.cpp
   CGExprScalar.cpp
+  CGExprDynamicUnsealed.cpp
   CGGPUBuiltin.cpp
   CGLoopInfo.cpp
   CGNonTrivialStruct.cpp

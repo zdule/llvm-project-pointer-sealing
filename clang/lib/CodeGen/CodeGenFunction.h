@@ -42,6 +42,7 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Utils/SanitizerStats.h"
+#include <llvm/IR/Value.h>
 
 namespace llvm {
 class BasicBlock;
@@ -112,6 +113,7 @@ struct CGCoroData;
 enum TypeEvaluationKind {
   TEK_Scalar,
   TEK_Complex,
+  TEK_DynamicUnsealed,
   TEK_Aggregate
 };
 
@@ -272,6 +274,7 @@ public:
   CodeGenFunction *ParentCGF = nullptr;
 
   typedef std::pair<llvm::Value *, llvm::Value *> ComplexPairTy;
+  typedef std::pair<llvm::Value *, llvm::Value *> PointerOTypePair;
   LoopInfoStack LoopStack;
   CGBuilderTy Builder;
 
@@ -4281,6 +4284,10 @@ public:
   Address emitAddrOfRealComponent(Address complex, QualType complexType);
   Address emitAddrOfImagComponent(Address complex, QualType complexType);
 
+  /// EmitComplexExpr - Emit the computation of the specified expression of
+  /// complex type, returning the result.
+  ComplexPairTy EmitDynamicUnsealedExpr(const Expr *E);
+
   /// AddInitializerToStaticVarDecl - Add the initializer for 'D' to the
   /// global variable that has already been created for it.  If the initializer
   /// has a different type than GV does, this may free GV and return a different
@@ -4754,6 +4761,11 @@ public:
                                 ArrayRef<MultiVersionResolverOption> Options);
 
   static uint64_t GetX86CpuSupportsMask(ArrayRef<StringRef> FeatureStrs);
+
+  llvm::Value *EmitPtrBinOp(llvm::Value *LHS, llvm::Value *RHS, QualType Ty,
+                            BinaryOperator::Opcode Opcode,
+                            const Expr *E);
+  llvm::Value *GetOrCreateSealingCap();
 
 private:
   QualType getVarArgType(const Expr *Arg);

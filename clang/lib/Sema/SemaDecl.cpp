@@ -9374,14 +9374,14 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     for (QualType T : OldParams) {
       if (const PointerType *PT = T->getAs<PointerType>())
         NewParams.push_back(Context.getPointerType(PT->getPointeeType(),
-                                                   PIK_Capability, 0));
+                                                   PIK_Capability, PSK_Unsealed));
       else
         NewParams.push_back(T);
     }
     QualType RetTy = FPT->getReturnType();
     if (const PointerType *PT = RetTy->getAs<PointerType>())
       RetTy = Context.getPointerType(PT->getPointeeType(),
-                                     PIK_Capability, 0);
+                                     PIK_Capability, PSK_Unsealed);
     NewFD->setType(Context.getFunctionType(RetTy, NewParams,
           FPT->getExtProtoInfo()));
   }

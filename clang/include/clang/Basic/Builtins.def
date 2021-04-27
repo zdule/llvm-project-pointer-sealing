@@ -1542,8 +1542,10 @@ BUILTIN(__builtin_cheri_cap_build, "v*mvC*mvC*m", "nct")
 BUILTIN(__builtin_cheri_cap_type_copy, "v*mvC*mvC*m", "nct")
 BUILTIN(__builtin_cheri_conditional_seal, "v*mvC*mvC*m", "nct")
 
-BUILTIN(__builtin_cheri_convert_sealed_capabilities, "v*mvC*mvC*mYvC*m", "nct")
+//BUILTIN(__builtin_cheri_convert_sealed_capabilities, "v*mvC*mvC*mYvC*m", "nct")
+BUILTIN(__builtin_cheri_trust_capability, "v*mv*mv*m", "nct")
 BUILTIN(__builtin_cheri_tagged_malloc, "v*mzvC*m", "nct")
+BUILTIN(__builtin_cheri_get_type_tag, "zvC*m", "nct")
 
 // Safestack builtins
 BUILTIN(__builtin___get_unsafe_stack_start, "v*", "Fn")

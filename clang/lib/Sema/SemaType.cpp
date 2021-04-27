@@ -2071,22 +2071,22 @@ static QualType deduceOpenCLPointeeAddrSpace(Sema &S, QualType PointeeType) {
   return PointeeType;
 }
 
-unsigned Sema::GetPointerSealingType(QualType PointeeType) {
-  if (PointerSealingMode == CHERIPointerSealingMode::AutoSealed)
-    return 123;
-  else
-    return  0;
+ PointerSealingKind Sema::GetPointerSealingKind(bool InMemory) {
+  switch (PointerSealingMode) {
+  case CHERIPointerSealingMode::Unsealed:
+    return PSK_Unsealed;
+  case CHERIPointerSealingMode::Static:
+    return InMemory ? PSK_StaticSealed : PSK_StaticUnsealed;
+  case CHERIPointerSealingMode::Dynamic:
+    return InMemory ? PSK_DynamicSealed :  PSK_DynamicUnsealed;
+  }
 }
 
-QualType Sema::GetUnsealedPointerType(QualType PointerT) {
-  Qualifiers quals = PointerT.getQualifiers();
-  const PointerType *pt = dyn_cast<PointerType>(PointerT.getTypePtr());
-  QualType UnsealedType = Context.getPointerType(
-      pt->getPointeeType(),
-      pt->getPointerInterpretation(),
-      0);
-  return Context.getQualifiedType(UnsealedType, quals);
+QualType Sema::GetDecayedArraySealedPointer(QualType ArrayType) {
+  QualType ResTy = Context.getArrayDecayedType(ArrayType);
+  return Context.getPointerTypeSealedAs(ResTy, GetPointerSealingKind(false));
 }
+
 
 /// Build a pointer type.
 ///
@@ -2143,7 +2143,7 @@ QualType Sema::BuildPointerType(QualType T,
   // Build the pointer type.
   if (ValidPointer)
     *ValidPointer = true;
-  return Context.getPointerType(T, PointerInterpretation, GetPointerSealingType(T));
+  return Context.getPointerType(T, PointerInterpretation, GetPointerSealingKind(true));
 }
 
 /// Build a reference type.
@@ -7918,18 +7918,18 @@ QualType Sema::BuildPointerInterpretationAttr(QualType T,
     Qualifiers Qs = T.getQualifiers();
 
     if (const PointerType *PT = T->getAs<PointerType>())
-      T = Context.getPointerType(PT->getPointeeType(), PIK, T->castAs<PointerType>()->getSealingType());
+      T = Context.getPointerType(PT->getPointeeType(), PIK, T->castAs<PointerType>()->getSealingKind());
     else if (const LValueReferenceType *LRT = T->getAs<LValueReferenceType>())
-      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, PIK, T->castAs<ReferenceType>()->getSealingType());
+      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, PIK, T->castAs<ReferenceType>()->getSealingKind());
     else if (const RValueReferenceType *RRT = T->getAs<RValueReferenceType>())
-      T = Context.getRValueReferenceType(RRT->getPointeeType(), PIK, T->castAs<ReferenceType>()->getSealingType());
+      T = Context.getRValueReferenceType(RRT->getPointeeType(), PIK, T->castAs<ReferenceType>()->getSealingKind());
     else
       llvm_unreachable("Don't know how to set the interpretation for T");
 
     if (Qs.hasQualifiers())
       T = Context.getQualifiedType(T, Qs);
   } else if (T->isDependentType()) {
-    T = Context.getDependentPointerType(T, PIK, T->castAs<DependentPointerType>()->getSealingType(), QualifierLoc);
+    T = Context.getDependentPointerType(T, PIK, T->castAs<DependentPointerType>()->getSealingKind(), QualifierLoc);
   } else {
     Diag(QualifierLoc, diag::err_cheri_capability_attribute_pointers_only)
         << T;
@@ -8057,25 +8057,25 @@ static void handleCheriNoProvenanceAttr(QualType &T, TypeProcessingState &State,
   T = State.getAttributedType(createSimpleAttr<CHERINoProvenanceAttr>(S.Context, Attr), T, T);
 }
 
-QualType Sema::BuildPointerSealedAttr(QualType T, unsigned SealingType,
+QualType Sema::BuildPointerSealedAttr(QualType T, PointerSealingKind SealingKind,
                                               SourceLocation QualifierLoc) {
   if (T->isPointerType() || T->isReferenceType()) {
     // preserve existing qualifiers on T
     Qualifiers Qs = T.getQualifiers();
 
     if (const PointerType *PT = T->getAs<PointerType>())
-      T = Context.getPointerType(PT->getPointeeType(), T->castAs<PointerType>()->getPointerInterpretation(), SealingType);
+      T = Context.getPointerType(PT->getPointeeType(), T->castAs<PointerType>()->getPointerInterpretation(), SealingKind);
     else if (const LValueReferenceType *LRT = T->getAs<LValueReferenceType>())
-      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, T->castAs<ReferenceType>()->getPointerInterpretation(), SealingType);
+      T = Context.getLValueReferenceType(LRT->getPointeeType(), true, T->castAs<ReferenceType>()->getPointerInterpretation(), SealingKind);
     else if (const RValueReferenceType *RRT = T->getAs<RValueReferenceType>())
-      T = Context.getRValueReferenceType(RRT->getPointeeType(), T->castAs<ReferenceType>()->getPointerInterpretation(), SealingType);
+      T = Context.getRValueReferenceType(RRT->getPointeeType(), T->castAs<ReferenceType>()->getPointerInterpretation(), SealingKind);
     else
       llvm_unreachable("Don't know how to set the interpretation for T");
 
     if (Qs.hasQualifiers())
       T = Context.getQualifiedType(T, Qs);
   } else if (T->isDependentType()) {
-    T = Context.getDependentPointerType(T, T->castAs<DependentPointerType>()->getPointerInterpretation(), SealingType, QualifierLoc);
+    T = Context.getDependentPointerType(T, T->castAs<DependentPointerType>()->getPointerInterpretation(), SealingKind, QualifierLoc);
   } else {
     Diag(QualifierLoc, diag::err_cheri_capability_attribute_pointers_only)
         << T;
@@ -8089,12 +8089,82 @@ static void handleCheriSealedPointerAttr(QualType &T, TypeProcessingState &State
                                         ParsedAttr &Attr) {
   Sema &S = State.getSema();
   Attr.setUsedAsTypeAttr();
+  if (Attr.getNumArgs() != 1) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+        << Attr << 1;
+    return;
+  }
   if (!T->isCapabilityPointerType()) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
         << Attr.getAttrName() << "capability types";
     return;
   }
-  T = S.BuildPointerSealedAttr(T, 123, Attr.getLoc());
+  StringRef str = Attr.getArgAsIdent(0)->Ident->getName();
+  CHERISealedPointerAttr::SealingKindEnum e;
+  if (!CHERISealedPointerAttr::ConvertStrToSealingKindEnum(str, e)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_argument_invalid_choice)
+      << Attr << "unsealed, syntactic or dynamic" << str;
+  }
+  PointerSealingKind PSK = (e == CHERISealedPointerAttr::SealingKindEnum::Unsealed) ? PSK_Unsealed :
+                           (e == CHERISealedPointerAttr::SealingKindEnum::Static) ? PSK_StaticSealed :
+                                                                                    PSK_DynamicSealed;
+  T = S.BuildPointerSealedAttr(T, PSK, Attr.getLoc());
+}
+
+static void handleCheriTaggedFreeAttr(QualType &T, TypeProcessingState &State,
+                                        TypeAttrLocation TAL,
+                                        ParsedAttr &Attr) {
+  Sema &S = State.getSema();
+  ASTContext &Context = S.getASTContext();
+  Attr.setUsedAsTypeAttr();
+  if (T->hasAttr(attr::CHERITaggedFree))
+    S.Diag(Attr.getLoc(), diag::warn_duplicate_attribute_exact)
+        << Attr.getAttrName();
+
+  // clang checked that T is a function type
+  if (!T->isFunctionProtoType()) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
+        << Attr.getAttrName() << "free-like function proto types";
+    return;
+  }
+  const FunctionProtoType *FT = T->castAs<FunctionProtoType>();
+  if (FT->getNumParams() != 1 ||
+      !Context.typesAreCompatible(FT->getParamType(0), Context.VoidPtrTy, true) ||
+      !Context.typesAreCompatible(FT->getReturnType(), Context.VoidTy, true)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
+        << Attr.getAttrName() << "free-like function proto types";
+    return;
+  }
+
+  T = State.getAttributedType(createSimpleAttr<CHERITaggedFreeAttr>(S.Context, Attr), T, T);
+}
+
+static void handleCheriTaggedMallocAttr(QualType &T, TypeProcessingState &State,
+                                         TypeAttrLocation TAL,
+                                         ParsedAttr &Attr) {
+  Sema &S = State.getSema();
+  ASTContext &Context = S.getASTContext();
+  Attr.setUsedAsTypeAttr();
+  if (T->hasAttr(attr::CHERITaggedMalloc))
+    S.Diag(Attr.getLoc(), diag::warn_duplicate_attribute_exact)
+        << Attr.getAttrName();
+
+  // clang checked that T is a function type
+  if (!T->isFunctionProtoType()) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
+        << Attr.getAttrName() << "malloc-like function proto types";
+    return;
+  }
+  const FunctionProtoType *FT = T->castAs<FunctionProtoType>();
+  if (FT->getNumParams() != 1 ||
+      !Context.typesAreCompatible(FT->getParamType(0), Context.getSizeType(), true) ||
+      !Context.typesAreCompatible(FT->getReturnType(), Context.VoidPtrTy, true)) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_decl_type_str)
+        << Attr.getAttrName() << "malloc-like function proto types";
+    return;
+  }
+
+  T = State.getAttributedType(createSimpleAttr<CHERITaggedMallocAttr>(S.Context, Attr), T, T);
 }
 
 static bool HandleMemoryAddressAttr(QualType &T, TypeProcessingState &State,
@@ -8437,6 +8507,12 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       break;
     case ParsedAttr::AT_CHERISealedPointer:
       handleCheriSealedPointerAttr(type, state, TAL, attr);
+      break;
+    case ParsedAttr::AT_CHERITaggedMalloc:
+      handleCheriTaggedMallocAttr(type, state, TAL, attr);
+      break;
+    case ParsedAttr::AT_CHERITaggedFree:
+      handleCheriTaggedFreeAttr(type, state, TAL, attr);
       break;
     case ParsedAttr::AT_MemoryAddress:
       if (!HandleMemoryAddressAttr(type, state, TAL, attr)) {

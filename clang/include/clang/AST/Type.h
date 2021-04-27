@@ -1462,6 +1462,53 @@ enum PointerInterpretationKind {
   PIK_Integer,
 };
 
+enum PointerSealingKindEnum : unsigned {
+  PSK_Unsealed,
+  PSK_StaticUnsealed,
+  PSK_StaticSealed,
+  PSK_DynamicUnsealed,
+  PSK_DynamicSealed,
+};
+
+class PointerSealingKind {
+  PointerSealingKindEnum value;
+public:
+  PointerSealingKind() : value(PSK_Unsealed) {};
+  constexpr PointerSealingKind(PointerSealingKindEnum psk) : value(psk) {}
+  constexpr PointerSealingKind(unsigned psk) : value(static_cast<PointerSealingKindEnum>(psk)) {}
+  operator PointerSealingKindEnum() const { return value; }
+  explicit operator bool() = delete;
+  bool operator < (PointerSealingKind B) const {
+    return value < B.value;
+  }
+  bool operator == (PointerSealingKind B) const {
+    return value == B.value;
+  }
+  bool operator == (PointerSealingKindEnum B) const {
+    return value == B;
+  }
+
+  bool isStatic() const {
+    return value == PSK_StaticSealed || value == PSK_StaticUnsealed;
+  }
+
+  bool isDynamic() const {
+    return value == PSK_DynamicSealed || value == PSK_DynamicUnsealed;
+  }
+
+  bool isSealed() const {
+    return value == PSK_DynamicSealed || value == PSK_StaticSealed;
+  }
+
+  bool isCompatible(PointerSealingKind other) const {
+    if (value == PSK_Unsealed || other.value == PSK_Unsealed) return true;
+    return isStatic() == other.isStatic();
+  }
+
+  PointerSealingKindEnum getValue() const { return value; }
+};
+
+
 /// The base class of the type hierarchy.
 ///
 /// A central concept with types is that each type always has a canonical
@@ -1644,7 +1691,7 @@ protected:
 
     /// The interpretation (PointerInterpretationKind) to use for this pointer.
     unsigned PIK : 1;
-    unsigned SealingType : 10;
+    unsigned SealingKind : 3;
   };
 
   class DependentPointerTypeBitfields {
@@ -1654,7 +1701,7 @@ protected:
 
     /// The interpretation (PointerInterpretationKind) to use for this pointer.
     unsigned PIK : 1;
-    unsigned SealingType : 10;
+    unsigned SealingKind : 3;
   };
 
   class ReferenceTypeBitfields {
@@ -1665,7 +1712,7 @@ protected:
     /// The interpretation (PointerInterpretationKind) to use for the pointer
     /// backing this reference type.
     unsigned PIK : 1;
-    unsigned SealingType : 10;
+    unsigned SealingKind : 3;
 
     /// True if the type was originally spelled with an lvalue sigil.
     /// This is never true of rvalue references but can also be false
@@ -2721,6 +2768,10 @@ class PointerInterpretationTrait {
 protected:
   PointerInterpretationTrait() = default;
 
+  void assertValidCapabilitySealingCombination() {
+    assert(isCHERICapability() || getSealingKind() == PSK_Unsealed);
+  }
+
 public:
   bool isCHERICapability() const {
     return getPointerInterpretation() == PIK_Capability;
@@ -2728,6 +2779,25 @@ public:
 
   PointerInterpretationKind getPointerInterpretation() const {
     return static_cast<const T *>(this)->getPointerInterpretationImpl();
+  }
+
+  PointerSealingKind getSealingKind() const {
+    return static_cast<const T *>(this)->getPointerSealingKindImpl();
+  }
+
+  bool isSealed() const {
+    return getSealingKind().isSealed();
+  }
+
+  PointerSealingKind getUnsealedVersion() const {
+    switch (getSealingKind()) {
+    case PSK_StaticSealed:
+      return PSK_StaticUnsealed;
+    case PSK_DynamicSealed:
+      return PSK_DynamicUnsealed;
+    default:
+      return getSealingKind();
+    }
   }
 };
 
@@ -2741,15 +2811,20 @@ class PointerType : public Type,
   QualType PointeeType;
 
   PointerType(QualType Pointee, QualType CanonicalPtr,
-              PointerInterpretationKind PIK, unsigned SealingType)
+              PointerInterpretationKind PIK, PointerSealingKind SealingKind)
       : Type(Pointer, CanonicalPtr, Pointee->getDependence()),
         PointeeType(Pointee) {
     PointerTypeBits.PIK = PIK;
-    PointerTypeBits.SealingType = SealingType;
+    PointerTypeBits.SealingKind = SealingKind.getValue();
+    assertValidCapabilitySealingCombination();
   }
 
   PointerInterpretationKind getPointerInterpretationImpl() const {
     return static_cast<PointerInterpretationKind>(PointerTypeBits.PIK);
+  }
+
+  PointerSealingKind getPointerSealingKindImpl() const {
+    return static_cast<PointerSealingKindEnum>(PointerTypeBits.SealingKind);
   }
 
 public:
@@ -2759,20 +2834,17 @@ public:
   QualType desugar() const { return QualType(this, 0); }
 
   void Profile(llvm::FoldingSetNodeID &ID) {
-    Profile(ID, getPointeeType(), getPointerInterpretation(),
-            PointerTypeBits.SealingType);
+    Profile(ID, getPointeeType(), getPointerInterpretation(), getSealingKind());
   }
 
   static void Profile(llvm::FoldingSetNodeID &ID, QualType Pointee,
-                      PointerInterpretationKind PIK, unsigned SealingType) {
+                      PointerInterpretationKind PIK, PointerSealingKind SealingKind) {
     ID.AddPointer(Pointee.getAsOpaquePtr());
     ID.AddInteger(PIK);
-    ID.AddInteger(SealingType);
+    ID.AddInteger(SealingKind.getValue());
   }
 
   static bool classof(const Type *T) { return T->getTypeClass() == Pointer; }
-
-  unsigned getSealingType() const { return PointerTypeBits.SealingType; }
 };
 
 /// Represents a type which was implicitly adjusted by the semantic
@@ -2872,16 +2944,21 @@ class ReferenceType : public Type,
     return static_cast<PointerInterpretationKind>(ReferenceTypeBits.PIK);
   }
 
+  PointerSealingKind getPointerSealingKindImpl() const {
+    return static_cast<PointerSealingKindEnum>(ReferenceTypeBits.SealingKind);
+  }
+
 protected:
   ReferenceType(TypeClass tc, QualType Referencee, QualType CanonicalRef,
                 bool SpelledAsLValue, PointerInterpretationKind PIK,
-                unsigned SealingType)
+                PointerSealingKind SealingKind)
       : Type(tc, CanonicalRef, Referencee->getDependence()),
         PointeeType(Referencee) {
     ReferenceTypeBits.PIK = PIK;
     ReferenceTypeBits.SpelledAsLValue = SpelledAsLValue;
     ReferenceTypeBits.InnerRef = Referencee->isReferenceType();
-    ReferenceTypeBits.SealingType = SealingType;
+    ReferenceTypeBits.SealingKind = SealingKind.getValue();
+    assertValidCapabilitySealingCombination();
   }
 
 public:
@@ -2900,26 +2977,24 @@ public:
 
   void Profile(llvm::FoldingSetNodeID &ID) {
     Profile(ID, PointeeType, isSpelledAsLValue(), getPointerInterpretation(),
-            ReferenceTypeBits.SealingType);
+            getSealingKind());
   }
 
   static void Profile(llvm::FoldingSetNodeID &ID,
                       QualType Referencee,
                       bool SpelledAsLValue,
                       PointerInterpretationKind PIK,
-                      unsigned SealingType) {
+                      PointerSealingKind SealingKind) {
     ID.AddPointer(Referencee.getAsOpaquePtr());
     ID.AddBoolean(SpelledAsLValue);
     ID.AddInteger(PIK);
-    ID.AddInteger(SealingType);
+    ID.AddInteger(SealingKind.getValue());
   }
 
   static bool classof(const Type *T) {
     return T->getTypeClass() == LValueReference ||
            T->getTypeClass() == RValueReference;
   }
-
-  unsigned getSealingType() const { return ReferenceTypeBits.SealingType; }
 };
 
 /// An lvalue reference type, per C++11 [dcl.ref].
@@ -2927,9 +3002,10 @@ class LValueReferenceType : public ReferenceType {
   friend class ASTContext; // ASTContext creates these
 
   LValueReferenceType(QualType Referencee, QualType CanonicalRef,
-                      bool SpelledAsLValue, PointerInterpretationKind PIK, unsigned SealingType)
+                      bool SpelledAsLValue, PointerInterpretationKind PIK,
+                      PointerSealingKind SealingKind)
       : ReferenceType(LValueReference, Referencee, CanonicalRef,
-                      SpelledAsLValue, PIK, SealingType) {}
+                      SpelledAsLValue, PIK, SealingKind) {}
 
 public:
   bool isSugared() const { return false; }
@@ -2945,9 +3021,9 @@ class RValueReferenceType : public ReferenceType {
   friend class ASTContext; // ASTContext creates these
 
   RValueReferenceType(QualType Referencee, QualType CanonicalRef,
-                      PointerInterpretationKind PIK, unsigned SealingType)
+                      PointerInterpretationKind PIK, PointerSealingKind SealingKind)
        : ReferenceType(RValueReference, Referencee, CanonicalRef, false,
-                       PIK, SealingType) {}
+                       PIK, SealingKind) {}
 
 public:
   bool isSugared() const { return false; }
@@ -3321,11 +3397,15 @@ class DependentPointerType : public Type,
 
   DependentPointerType(const ASTContext &Context, QualType PointerType,
                        QualType Canonical, PointerInterpretationKind PIK,
-                       unsigned SealingType, SourceLocation Loc);
+                       PointerSealingKind SealingKind, SourceLocation Loc);
 
   PointerInterpretationKind getPointerInterpretationImpl() const {
     return static_cast<PointerInterpretationKind>(
         DependentPointerTypeBits.PIK);
+  }
+
+  PointerSealingKind getPointerSealingKindImpl() const {
+    return static_cast<PointerSealingKindEnum>(DependentPointerTypeBits.SealingKind);
   }
 
 public:
@@ -3341,14 +3421,12 @@ public:
 
   void Profile(llvm::FoldingSetNodeID &ID) {
     Profile(ID, Context, getPointerType(), getPointerInterpretation(),
-            DependentPointerTypeBits.SealingType);
+            getSealingKind());
   }
 
   static void Profile(llvm::FoldingSetNodeID &Id, const ASTContext &Context,
                       QualType PointerType, PointerInterpretationKind PIK,
-                      unsigned SealingType);
-
-  unsigned getSealingType() const { return DependentPointerTypeBits.SealingType; }
+                      PointerSealingKind SealingKind);
 };
 
 /// Represents an extended vector type where either the type or size is

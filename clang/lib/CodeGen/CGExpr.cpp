@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "CGCheriCast.h"
 #include "CGCXXABI.h"
 #include "CGCall.h"
 #include "CGCleanup.h"
@@ -217,6 +218,8 @@ RValue CodeGenFunction::EmitAnyExpr(const Expr *E,
     return RValue::get(EmitScalarExpr(E, ignoreResult));
   case TEK_Complex:
     return RValue::getComplex(EmitComplexExpr(E, ignoreResult, ignoreResult));
+  case TEK_DynamicUnsealed:
+    return RValue::getComplex(EmitDynamicUnsealedExpr(E));
   case TEK_Aggregate:
     if (!ignoreResult && aggSlot.isIgnored())
       aggSlot = CreateAggTemp(E->getType(), "agg-temp");
@@ -5999,6 +6002,11 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
       OrigCallee.getAbstractInfo().getCalleeDecl().getDecl();
 
   CalleeType = getContext().getCanonicalType(CalleeType);
+
+  // Redirect malloc calls to a shim allocator allocator, which takes type info
+  if (TargetDecl && TargetDecl->hasAttr<AllocSizeAttr>()) {
+    return EmitTaggedMallocCall(*this, CalleeType, OrigCallee ,E);
+  }
 
   auto PointeeType = cast<PointerType>(CalleeType)->getPointeeType();
 

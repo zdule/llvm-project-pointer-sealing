@@ -499,7 +499,9 @@ ExprResult Sema::DefaultFunctionArrayConversion(Expr *E, bool Diagnose) {
         if (!checkAddressOfFunctionIsAvailable(FD, Diagnose, E->getExprLoc()))
           return ExprError();
 
-    E = ImpCastExprToType(E, Context.getPointerType(Ty),
+    PointerInterpretationKind PIK = Context.getDefaultPointerInterpretation();
+    PointerSealingKind PSK = GetPointerSealingKind(false);
+    E = ImpCastExprToType(E, Context.getPointerType(Ty, PIK, PSK),
                           CK_FunctionToPointerDecay).get();
   } else if (Ty->isArrayType()) {
     // In C90 mode, arrays only promote to pointers if the array expression is
@@ -514,7 +516,7 @@ ExprResult Sema::DefaultFunctionArrayConversion(Expr *E, bool Diagnose) {
     // T" can be converted to an rvalue of type "pointer to T".
     //
     if (getLangOpts().C99 || getLangOpts().CPlusPlus || E->isLValue())
-      E = ImpCastExprToType(E, Context.getArrayDecayedType(Ty),
+      E = ImpCastExprToType(E, GetDecayedArraySealedPointer(Ty),
                             CK_ArrayToPointerDecay).get();
   }
   return E;
@@ -711,16 +713,6 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
     Res = ImplicitCastExpr::Create(Context, T, CK_AtomicToNonAtomic, Res.get(),
                                    nullptr, VK_RValue);
   }
-
-  // Pointers are unsealed when converted to rvalue.
-  if (auto *pt = dyn_cast<PointerType>(T)) {
-    if (pt->getSealingType() != 0) {
-      if (Res.isInvalid())
-        return Res;
-      Res = ImpCastExprToType(Res.get(), GetUnsealedPointerType(T),
-                              CK_CHERISealedCapabilityConversion);
-    }
-  }
   return Res;
 }
 
@@ -750,6 +742,7 @@ ExprResult Sema::CallExprUnaryConversions(Expr *E) {
   Res = DefaultLvalueConversion(Res.get());
   if (Res.isInvalid())
     return ExprError();
+  Res = CheckUnsealPointer(Res, true);
   return Res.get();
 }
 
@@ -768,6 +761,9 @@ ExprResult Sema::UsualUnaryConversions(Expr *E) {
   QualType Ty = E->getType();
   assert(!Ty.isNull() && "UsualUnaryConversions - missing type");
 
+  if (const PointerType *PtrTy = Ty->getAs<PointerType>())
+    if (PtrTy->isSealed())
+      return CheckUnsealPointer(ExprResult(E));
   // Half FP have to be promoted to float unless it is natively supported
   if (Ty->isHalfType() && !getLangOpts().NativeHalfType)
     return ImpCastExprToType(Res.get(), Context.FloatTy, CK_FloatingCast);
@@ -2845,7 +2841,7 @@ Sema::PerformObjectMemberConversion(Expr *From,
     if (FromPtrType) {
       DestType = Context.getPointerType(DestRecordType,
                                         FromPtrType->getPointerInterpretation(),
-                                          UNCERTAIN_SEALING_TYPE);
+                                          PSK_Unsealed);
       FromRecordType = FromPtrType->getPointeeType();
       PointerConversions = true;
     } else {
@@ -2934,7 +2930,7 @@ Sema::PerformObjectMemberConversion(Expr *From,
         QType = Context.getPointerType(QType,
                                        FromType->isCHERICapabilityType(Context)
                                            ? PIK_Capability : PIK_Integer,
-                                       UNCERTAIN_SEALING_TYPE);
+                                       PSK_Unsealed);
       From = ImpCastExprToType(From, QType, CK_UncheckedDerivedToBase,
                                VK, &BasePath).get();
 
@@ -2974,7 +2970,7 @@ Sema::PerformObjectMemberConversion(Expr *From,
         UType = Context.getPointerType(UType,
                                        FromType->isCHERICapabilityType(Context)
                                            ? PIK_Capability : PIK_Integer,
-                                       UNCERTAIN_SEALING_TYPE);
+                                       PSK_Unsealed);
       From = ImpCastExprToType(From, UType, CK_UncheckedDerivedToBase,
                                VK, &BasePath).get();
       FromType = UType;
@@ -5412,9 +5408,17 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     ExprResult Result = DefaultFunctionArrayLvalueConversion(LHSExp);
     if (Result.isInvalid())
       return ExprError();
+    if (Result.get()->getType()->isPointerType())
+      Result = CheckUnsealPointer(Result, true);
+    if (Result.isInvalid())
+      return ExprError();
     LHSExp = Result.get();
   }
   ExprResult Result = DefaultFunctionArrayLvalueConversion(RHSExp);
+  if (Result.isInvalid())
+    return ExprError();
+  if (Result.get()->getType()->isPointerType())
+    Result = CheckUnsealPointer(Result, true);
   if (Result.isInvalid())
     return ExprError();
   RHSExp = Result.get();
@@ -5492,7 +5496,7 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     // force the promotion here.
     Diag(LHSExp->getBeginLoc(), diag::ext_subscript_non_lvalue)
         << LHSExp->getSourceRange();
-    LHSExp = ImpCastExprToType(LHSExp, Context.getArrayDecayedType(LHSTy),
+    LHSExp = ImpCastExprToType(LHSExp, GetDecayedArraySealedPointer(LHSTy),
                                CK_ArrayToPointerDecay).get();
     LHSTy = LHSExp->getType();
 
@@ -5503,7 +5507,7 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     // Same as previous, except for 123[f().a] case
     Diag(RHSExp->getBeginLoc(), diag::ext_subscript_non_lvalue)
         << RHSExp->getSourceRange();
-    RHSExp = ImpCastExprToType(RHSExp, Context.getArrayDecayedType(RHSTy),
+    RHSExp = ImpCastExprToType(RHSExp, GetDecayedArraySealedPointer(RHSTy),
                                CK_ArrayToPointerDecay).get();
     RHSTy = RHSExp->getType();
 
@@ -6534,7 +6538,6 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
         Diag(RParenLoc, diag::warn_calling_non_sensitive_from_sensitive)
             << FDecl << currentDecl;
 
-
   // Functions with 'interrupt' attribute cannot be called directly.
   if (FDecl && FDecl->hasAttr<AnyX86InterruptAttr>()) {
     Diag(Fn->getExprLoc(), diag::err_anyx86_interrupt_called);
@@ -6689,6 +6692,10 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // We know the result type of the call, set it.
   TheCall->setType(FuncT->getCallResultType(Context));
   TheCall->setValueKind(Expr::getValueKindForType(FuncT->getReturnType()));
+
+  if (FDecl && FDecl->hasAttr<AllocSizeAttr>()) {
+    TheCall->setType(Context.getPointerTypeSealedAs(TheCall->getType(), GetPointerSealingKind(false)));
+  }
 
   if (Proto) {
     if (ConvertArgumentsForCall(TheCall, Fn, FDecl, Proto, Args, RParenLoc,
@@ -7032,6 +7039,253 @@ CastKind Sema::PrepareCastToObjCObjectPointer(ExprResult &E) {
   }
 }
 
+// returns first cast to perfrom to get from Src to Dest
+static Optional<std::pair<CastKind, PointerSealingKind>>
+    GetSealedCastKind(PointerSealingKind Src, PointerSealingKind Dest) {
+  if (Src == Dest)
+    return {{CK_NoOp, Src}};
+  switch (Src) {
+  case PSK_StaticUnsealed:
+    switch (Dest) {
+    case PSK_Unsealed:
+      return {{CK_NoOp, PSK_Unsealed}};
+    case PSK_StaticSealed:
+      return {{CK_StaticUnsealedToStaticSealedPointerCast, PSK_StaticSealed}};
+    default:
+      return {};
+    }
+
+  case PSK_StaticSealed:
+    switch (Dest) {
+    case PSK_Unsealed:
+    case PSK_StaticUnsealed:
+      return {{CK_StaticSealedToStaticUnsealedPointerCast, PSK_StaticUnsealed}};
+    default:
+      return {};
+    }
+
+  case PSK_DynamicUnsealed:
+    switch (Dest) {
+    case PSK_Unsealed:
+      return {{CK_DynamicUnsealedToUnsealedPointerCast, PSK_Unsealed}};
+    case PSK_DynamicSealed:
+      return {{CK_DynamicUnsealedToDynamicSealedPointerCast, PSK_DynamicSealed}};
+    default:
+      return {};
+    }
+
+  case PSK_DynamicSealed:
+    switch (Dest) {
+    case PSK_Unsealed:
+    case PSK_DynamicUnsealed:
+      return {{CK_DynamicSealedToDynamicUnsealedPointerCast, PSK_DynamicUnsealed}};
+    default:
+      return {};
+    }
+
+  default:
+    return {};
+  }
+}
+
+/// Diagnose sealing kind conversion between two sealing kinds.
+/// Expr is assumed to be a valid expression of pointer type.
+/// If the conversion is invalid, a diagnostic is emitted, and Expr is replaced
+/// with ExprError().
+/// The return value indicates whether an error occurred.
+static bool DiagnoseSealingKindConversion(Sema &S, ExprResult &Expr, PointerSealingKind SrcPSK,
+                                          PointerSealingKind DestPSK, bool CheckOnly = false) {
+  if (SrcPSK == PSK_Unsealed && DestPSK != PSK_Unsealed) {
+    if (!CheckOnly) {
+      S.Diag(Expr.get()->getExprLoc(),
+             diag::err_invalid_conversion_from_unsealed);
+      Expr = ExprError();
+    }
+    return true;
+  }
+  if (!SrcPSK.isCompatible(DestPSK)) {
+    if (!CheckOnly) {
+      S.Diag(Expr.get()->getExprLoc(),
+             diag::err_invalid_conversion_between_sealing_kinds)
+          << SrcPSK.isDynamic();
+      Expr = ExprError();
+    }
+    return true;
+  }
+  return false;
+}
+
+/// Perform implicit sealing kind conversion. The conversion is assumed to be
+/// correct (If unsure use CheckSealingKindConversion).
+/// Expr is assumed to be a valid expression of pointer type.
+/// Return value will contain the last implicit CastKind.
+/// Expr is replaced with implicit casts.
+/// If PerformLast is false the last implicit cast will not be created.
+static CastKind ImpCastSealingKind(Sema &S, ExprResult &Expr, PointerSealingKind DestPSK, bool RewriteExpr, bool PerformLast=true) {
+  assert(Expr.isUsable());
+
+  QualType SrcTy = Expr.get()->getType();
+  const PointerType *SrcPtrTy = SrcTy->castAs<PointerType>();
+  PointerSealingKind SrcPSK = SrcPtrTy->getSealingKind();
+
+  if (SrcPSK == DestPSK)
+    return CK_NoOp;
+  assert(!DiagnoseSealingKindConversion(S, Expr, SrcPSK, DestPSK, true) &&
+         "Sealing kind conversion impossible. Sealing kinds are incompatible");
+
+  // the largest conversion chain should be 2 conversions
+  for (int iter = 0; iter < 5; iter++) {
+    auto NextStep = GetSealedCastKind(SrcPSK, DestPSK);
+    assert(NextStep.hasValue() && "Could not find next step for the conversion.");
+
+    if ((NextStep->second != DestPSK || PerformLast) && RewriteExpr) {
+      Expr = S.ImpCastExprToType(
+          Expr.get(),
+              S.getASTContext().getPointerTypeSealedAs(SrcTy, NextStep->second),
+              NextStep->first);
+    }
+    SrcPSK = NextStep->second;
+    if (SrcPSK == DestPSK)
+      return NextStep->first;
+  }
+  llvm_unreachable("Infinite loop detected!");
+}
+
+bool Sema::CheckSealingKindConversion(ExprResult &E, PointerSealingKind ResultPSK,
+                                       CastKind &Kind, bool RewriteExpr, bool PerformLast) {
+  assert(E.isUsable());
+  assert(E.get()->getType()->isPointerType());
+  if (DiagnoseSealingKindConversion(*this, E,
+                                    E.get()->getType()->castAs<PointerType>()
+                                        ->getSealingKind(),
+                                    ResultPSK))
+    return true;
+  Kind = ImpCastSealingKind(*this, E, ResultPSK, RewriteExpr, PerformLast);
+  return false;
+}
+bool Sema::CheckSealingKindConversion(ExprResult &E, PointerSealingKind ResultPSK,
+                                       bool RewriteExpr, bool PerformLast) {
+  CastKind Kind;
+  return CheckSealingKindConversion(E, ResultPSK, Kind, RewriteExpr, PerformLast);
+}
+
+ExprResult Sema::CheckUnsealPointer(ExprResult Src, bool CompleteUnseal) {
+  if (Src.isUsable())
+    Src = CheckPlaceholderExpr(Src.get());
+  if (Src.isInvalid())
+    return ExprError();
+  const PointerType *Type = Src.get()->getType()->castAs<PointerType>();
+  PointerSealingKind PSK = CompleteUnseal
+                               ? PointerSealingKind(PSK_Unsealed)
+                               : Type->getUnsealedVersion();
+  if (Type->getSealingKind() != PSK)
+    CheckSealingKindConversion(Src, PSK);
+  return Src;
+}
+
+static Optional<CastKind> ComputeCPointerCast(Sema &S, ExprResult &Src, QualType DestTy, bool PerformLast) {
+  QualType SrcTy = Src.get()->getType();
+  const PointerType *SrcPtrTy = SrcTy->castAs<PointerType>();
+  const PointerType *DestPtrTy = DestTy->castAs<PointerType>();
+  LangAS SrcAS = SrcTy->getPointeeType().getAddressSpace();
+  LangAS DestAS = DestTy->getPointeeType().getAddressSpace();
+  PointerSealingKind SrcPSK = SrcPtrTy->getSealingKind();
+  PointerSealingKind DestPSK = DestPtrTy->getSealingKind();
+
+  if (Src.get()->isNullPointerConstant(S.Context, Expr::NPC_ValueDependentIsNull))
+    return CK_NullToPointer;
+  if (DiagnoseSealingKindConversion(S, Src, SrcPSK, DestPSK))
+    return {};
+
+  bool PointToCapCast = !SrcTy->isCHERICapabilityType(S.Context) && DestTy->isCHERICapabilityType(S.Context);
+  bool CapToPointCast = SrcTy->isCHERICapabilityType(S.Context) && !DestTy->isCHERICapabilityType(S.Context);
+  bool OtherASCast = !PointToCapCast &&  !CapToPointCast && (SrcAS != DestAS);
+  bool DifferentPointees = !S.Context.hasCvrSimilarType(SrcTy, DestTy);
+  bool StaticSealedPointeeCast = DifferentPointees && SrcPSK == PSK_StaticSealed && DestPSK == PSK_StaticSealed;
+  bool StaticPointeeCast = DifferentPointees &&
+                           (StaticSealedPointeeCast || SrcPSK == PSK_StaticUnsealed || DestPSK == PSK_StaticUnsealed);
+  bool DynamicUnsealCast = SrcPSK == PSK_DynamicSealed &&
+                           (DestPSK == PSK_DynamicUnsealed || DestPSK == PSK_Unsealed);
+  bool StaticUnsealCast = (SrcPSK == PSK_StaticSealed &&
+                           (DestPSK == PSK_StaticUnsealed || DestPSK == PSK_Unsealed)) ||
+                          StaticSealedPointeeCast;
+  bool DynamicSealCast = DestPSK == PSK_DynamicSealed &&
+                         (SrcPSK == PSK_DynamicUnsealed || SrcPSK == PSK_Unsealed);
+  bool StaticSealCast = (DestPSK == PSK_StaticSealed &&
+                         (SrcPSK == PSK_StaticUnsealed || SrcPSK == PSK_Unsealed)) ||
+                        StaticSealedPointeeCast;
+  bool DynamicUnsealToUnsealCast = DestPSK == PSK_Unsealed &&
+                                   (SrcPSK == PSK_DynamicUnsealed || SrcPSK == PSK_DynamicSealed);
+  bool StaticUnsealToUnsealCast = DestPSK == PSK_Unsealed &&
+                                  (SrcPSK == PSK_StaticUnsealed || SrcPSK == PSK_StaticSealed);
+
+  // Ptr T1 ---1---> Cap T1 --------------------------------> Cap T2 --6--> Ptr T2
+  //                                                         / 4
+  // Sealed T1 -2-> St/Dy Unsealed T1 -3-> St/Dy Unsealed T2 -------5-------> Sealed T2
+  //
+  // additionally OtherAsCast at the end
+
+  bool DoCast = CapToPointCast || StaticSealCast || DynamicSealCast ||
+                DynamicUnsealToUnsealCast || StaticUnsealToUnsealCast || DifferentPointees ||
+                StaticPointeeCast || StaticUnsealCast || DynamicUnsealCast ||
+                PointToCapCast || OtherASCast;
+  if (!DoCast)
+    return CK_NoOp;
+
+  CastKind LastCast = CK_NoOp;
+  QualType LastType = SrcTy;
+  if (PointToCapCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getAddrSpaceQualType(LastType, DestTy.getAddressSpace());
+    LastCast = CK_PointerToCHERICapability;
+  }
+  if (StaticUnsealCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getPointerTypeSealedAs(LastType, PSK_StaticUnsealed);
+    LastCast = CK_StaticSealedToStaticUnsealedPointerCast;
+  }
+  if (DynamicUnsealCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getPointerTypeSealedAs(LastType, PSK_DynamicUnsealed);
+    LastCast = CK_DynamicSealedToDynamicUnsealedPointerCast;
+  }
+  if (DifferentPointees) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.updatePointerPointeeType(LastType, DestTy->getPointeeType());
+    LastCast = StaticPointeeCast ?  CK_StaticUnsealedPointeeCast : CK_BitCast;
+  }
+  if (StaticUnsealToUnsealCast || DynamicUnsealToUnsealCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getPointerTypeSealedAs(LastType, PSK_Unsealed);
+    LastCast = DynamicUnsealToUnsealCast ?  CK_DynamicUnsealedToUnsealedPointerCast : CK_NoOp;
+  }
+  if (StaticSealCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getPointerTypeSealedAs(LastType, PSK_StaticSealed);
+    LastCast = CK_StaticUnsealedToStaticSealedPointerCast;
+  }
+  if (DynamicSealCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getPointerTypeSealedAs(LastType, PSK_DynamicSealed);
+    LastCast = CK_DynamicUnsealedToDynamicSealedPointerCast;
+  }
+  if (CapToPointCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getAddrSpaceQualType(LastType, DestTy.getAddressSpace());
+    LastCast = CK_CHERICapabilityToPointer;
+  }
+  if (OtherASCast) {
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+    LastType = S.Context.getAddrSpaceQualType(LastType, DestTy.getAddressSpace());
+    LastCast = CK_AddressSpaceConversion;
+  }
+  if (PerformLast && LastCast != CK_NoOp)
+    Src = S.ImpCastExprToType(Src.get(), LastType, LastCast);
+  assert(LastType == DestTy);
+  return LastCast;
+
+}
+
 /// Prepares for a scalar cast, performing all the necessary stages
 /// except the final cast and returning the kind required.
 CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
@@ -7052,8 +7306,10 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
   case Type::STK_ObjCObjectPointer:
     switch (DestTy->getScalarTypeKind()) {
     case Type::STK_CPointer: {
-      LangAS SrcAS = SrcTy->getPointeeType().getAddressSpace();
-      LangAS DestAS = DestTy->getPointeeType().getAddressSpace();
+      Optional<CastKind> CK = ComputeCPointerCast(*this, Src, DestTy, false);
+      // TODO: dz308: is this OK?
+      return CK.getValueOr(CK_NoOp);
+      /*
       if (SrcAS != DestAS)
         return CK_AddressSpaceConversion;
       else if (!SrcTy->isCHERICapabilityType(Context) && DestTy->isCHERICapabilityType(Context))
@@ -7063,6 +7319,7 @@ CastKind Sema::PrepareScalarCast(ExprResult &Src, QualType DestTy) {
       else if (Context.hasCvrSimilarType(SrcTy, DestTy))
         return CK_NoOp;
       return CK_BitCast;
+       */
     }
     case Type::STK_BlockPointer:
       return (SrcKind == Type::STK_BlockPointer
@@ -7685,6 +7942,34 @@ static bool checkConditionalNullPointer(Sema &S, ExprResult &NullExpr,
   return false;
 }
 
+static PointerSealingKind getCommonPointerSealingKind(PointerSealingKind LHS,
+                                                      PointerSealingKind RHS) {
+  auto isSealed = [](PointerSealingKind A) {
+    return A == PSK_StaticSealed ||
+           A == PSK_DynamicSealed;
+  };
+  auto isStatic = [](PointerSealingKind A) {
+    return A == PSK_StaticUnsealed ||
+           A == PSK_StaticSealed;
+  };
+  auto isDynamic = [](PointerSealingKind A) {
+    return A == PSK_DynamicUnsealed ||
+           A == PSK_DynamicSealed;
+  };
+
+  bool resSealed = isSealed(LHS) && isSealed(RHS);
+  bool resDynamic = isDynamic(LHS) && isDynamic(RHS);
+  bool resStatic = isStatic(LHS) && isStatic(RHS);
+  if (resDynamic)
+    return resSealed ? PSK_DynamicSealed :
+                       PSK_DynamicUnsealed;
+  else if (resStatic)
+    return resSealed ? PSK_StaticSealed :
+           PSK_StaticUnsealed;
+  else
+    return PSK_Unsealed;
+}
+
 /// Checks compatibility between two pointers and return the resulting
 /// type.
 static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
@@ -7740,17 +8025,21 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
     return QualType();
   }
 
-  // Cheri sealed pointers types must match
-  if (LHSTy->castAs<PointerType>()->getSealingType() != RHSTy->castAs<PointerType>()->getSealingType())
+  // Cheri pointers must match in sealing kind
+  if (const PointerType *LHSPointer = LHSTy->getAs<PointerType>())
+    if (const PointerType *RHSPointer = RHSTy->getAs<PointerType>())
+  if (LHSPointer->getSealingKind() != RHSPointer->getSealingKind())
   {
-    const auto id = S.getDiagnostics().getCustomDiagID(clang::DiagnosticsEngine::Error,
-                                 "incompatible cheri sealing types %0 and %1, on types %2 and %3");
-    S.Diag(Loc, id) << LHSTy->castAs<PointerType>()->getSealingType()
-                    <<  RHSTy->castAs<PointerType>()->getSealingType()
-                    << LHSTy.getAsString()
-                    << RHSTy.getAsString()
-                    << LHS.get()->getSourceRange()
-                    << RHS.get()->getSourceRange();
+    // If at least one type is trusted or sealed, we need to convert (unseal, check) both types to trusted types
+    PointerSealingKind CommonSealingKind = getCommonPointerSealingKind(
+        LHSPointer->getSealingKind(), RHSPointer->getSealingKind());
+    bool Failed = false;
+    if (LHSPointer->getSealingKind() != CommonSealingKind)
+      Failed |= S.CheckSealingKindConversion(LHS, CommonSealingKind);
+    if (RHSPointer->getSealingKind() != CommonSealingKind)
+      Failed |= S.CheckSealingKindConversion(RHS, CommonSealingKind);
+    if (Failed)
+      return QualType();
   }
 
   unsigned MergedCVRQual = lhQual.getCVRQualifiers() | rhQual.getCVRQualifiers();
@@ -7827,7 +8116,7 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
         RHSTy->isCHERICapabilityType(S.Context, false)) {
       PIK = PIK_Capability;
     }
-    ResultTy = S.Context.getPointerType(ResultTy, PIK, LHSTy->castAs<PointerType>()->getSealingType());
+    ResultTy = S.Context.getPointerType(ResultTy, PIK, LHSTy->castAs<PointerType>()->getSealingKind());
   }
 
   LHS = S.ImpCastExprToType(LHS.get(), ResultTy, LHSCastKind);
@@ -7880,7 +8169,7 @@ checkConditionalObjectPointersCompatibility(Sema &S, ExprResult &LHS,
       = S.Context.getQualifiedType(lhptee, rhptee.getQualifiers());
     QualType destType = S.Context.getPointerType(
         destPointee, RHSTy->castAs<PointerType>()->getPointerInterpretation(),
-        RHSTy->castAs<PointerType>()->getSealingType());
+        RHSTy->castAs<PointerType>()->getSealingKind());
     // Add qualifiers if necessary.
     LHS = S.ImpCastExprToType(LHS.get(), destType, CK_NoOp);
     // Promote to void*.
@@ -7892,7 +8181,7 @@ checkConditionalObjectPointersCompatibility(Sema &S, ExprResult &LHS,
       = S.Context.getQualifiedType(rhptee, lhptee.getQualifiers());
     QualType destType = S.Context.getPointerType(
         destPointee, LHSTy->castAs<PointerType>()->getPointerInterpretation(),
-        LHSTy->castAs<PointerType>()->getSealingType());
+        RHSTy->castAs<PointerType>()->getSealingKind());
     // Add qualifiers if necessary.
     RHS = S.ImpCastExprToType(RHS.get(), destType, CK_NoOp);
     // Promote to void*.
@@ -8232,7 +8521,6 @@ QualType Sema::CheckConditionalOperands(ExprResult &Cond, ExprResult &LHS,
     return checkConditionalBlockPointerCompatibility(*this, LHS, RHS,
                                                      QuestionLoc);
 
-  //TODO: handle type sealed pointers
   // Check constraints for C object pointers types (C99 6.5.15p3,6).
   if (LHSTy->isPointerType() && RHSTy->isPointerType())
     return checkConditionalObjectPointersCompatibility(*this, LHS, RHS,
@@ -8826,8 +9114,8 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
         // be incompatible even with sealing types ignored, eg:
         // int *[[cheri::sealed_pointer] * p = (double**) NULL;
         // would complain about sealing types.
-        if (lhptee->castAs<PointerType>()->getSealingType() !=
-            rhptee->castAs<PointerType>()->getSealingType())
+        if (lhptee->castAs<PointerType>()->getSealingKind() !=
+            rhptee->castAs<PointerType>()->getSealingKind())
           return Sema::IncompatibleNestedCHERISealingTypes;
 
         std::tie(lhptee, lhq) =
@@ -9138,18 +9426,32 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
                                                : CK_PointerToCHERICapability;
         return RHSPointer->isCHERICapability() ? CHERICapabilityToPointer
                                                : PointerToCHERICapability;
-      } else if (LHSPointer->getSealingType() != RHSPointer->getSealingType()) {
-        QualType IntermediaryType = Context.getPointerType(
-            LHSPointer->getPointeeType(),
-            LHSPointer->getPointerInterpretation(),
-            RHSPointer->getSealingType());
+      } else if (LHSPointer->getSealingKind() != RHSPointer->getSealingKind()) {
+        QualType IntermediaryType = Context.getPointerTypeSealedAs(LHSType,
+            RHSPointer->getSealingKind());
         Sema::AssignConvertType result =
             CheckAssignmentConstraints(IntermediaryType, RHS, Kind);
-        if (result != Compatible)
+        if (result == Incompatible)
           return result;
         if (Kind != CK_NoOp && ConvertRHS)
           RHS = ImpCastExprToType(RHS.get(), IntermediaryType, Kind);
-        Kind = CK_CHERISealedCapabilityConversion;
+        if (CheckSealingKindConversion(RHS, LHSPointer->getSealingKind(),
+                                       Kind, ConvertRHS, false))
+          return Incompatible;
+        return Compatible;
+      } else if (LHSPointer->getSealingKind() == PSK_StaticSealed &&
+                 RHSPointer->getSealingKind() == PSK_StaticSealed &&
+                 LHSPointer->getPointeeType() != RHSPointer->getPointeeType()) {
+        QualType IntermediaryType = Context.getPointerTypeSealedAs(LHSType, PSK_StaticUnsealed);
+        if (CheckSealingKindConversion(RHS, PSK_StaticUnsealed, Kind, ConvertRHS, true))
+          return Incompatible;
+        Sema::AssignConvertType result =
+            checkPointerTypesForAssignment(*this, IntermediaryType, RHS.get()->getType());
+        if (result == Incompatible)
+          return result;
+        RHS = ImpCastExprToType(RHS.get(), IntermediaryType, CK_StaticUnsealedPointeeCast);
+        if (CheckSealingKindConversion(RHS, PSK_StaticSealed, Kind, ConvertRHS, false))
+          return Incompatible;
         return Compatible;
       } else {
         if (Context.hasCvrSimilarType(RHSType, LHSType))
@@ -9174,17 +9476,18 @@ Sema::CheckAssignmentConstraints(QualType LHSType, ExprResult &RHS,
     // int -> T*
     if (RHSType->isIntegerType()) {
       // Need to seal integer constants if LHS is sealed
-      if (LHSPointer->getSealingType() != 0) {
+      if (LHSPointer->getSealingKind() != PSK_Unsealed) {
         QualType IntermediaryType =
-            Context.getPointerType(LHSPointer->getPointeeType(),
-                                   LHSPointer->getPointerInterpretation(), 0);
+            Context.getPointerTypeSealedAs(LHSType, PSK_Unsealed);
         Sema::AssignConvertType result =
             CheckAssignmentConstraints(IntermediaryType, RHS, Kind);
         if (result != Compatible)
           return result;
         if (Kind != CK_NoOp && ConvertRHS)
           RHS = ImpCastExprToType(RHS.get(), IntermediaryType, Kind);
-        Kind = CK_CHERISealedCapabilityConversion;
+        if (CheckSealingKindConversion(RHS, LHSPointer->getSealingKind(),
+                                       Kind, ConvertRHS, false))
+          return Incompatible;
         return Compatible;
       }
       bool RHSIsNull =
@@ -9526,11 +9829,7 @@ Sema::CheckSingleAssignmentConstraints(QualType LHSType, ExprResult &CallerRHS,
       CheckPointerConversion(RHS.get(), LHSType, Kind, Path,
                              /*IgnoreBaseAccess=*/false, Diagnose);
       if (ConvertRHS) {
-        QualType IntermediaryType =
-            Context.getPointerType(LHSType->castAs<PointerType>()->getPointeeType(),
-                                   LHSType->castAs<PointerType>()->getPointerInterpretation(), 0);
-        RHS = ImpCastExprToType(ImpCastExprToType(RHS.get(), IntermediaryType, Kind,
-                              VK_RValue, &Path).get(), LHSType, CK_CHERISealedCapabilityConversion);
+        RHS = ImpCastExprToType(RHS.get(), LHSType, CK_NullToPointer);
       }
     }
     return Compatible;
@@ -13661,7 +13960,7 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
   CheckAddressOfPackedMember(op);
 
   PointerInterpretationKind PIK = pointerKindForBaseExpr(Context, op);
-  return Context.getPointerType(op->getType(), PIK, 0);
+  return Context.getPointerType(op->getType(), PIK, GetPointerSealingKind(false));
 }
 
 static void RecordModifiableNonNullParam(Sema &S, const Expr *Exp) {
@@ -14675,11 +14974,13 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
     break;
   case UO_AddrOf:
     resultType = CheckAddressOfOperand(Input, OpLoc);
+    resultType = Context.getPointerTypeSealedAs(resultType, GetPointerSealingKind(false));
     CheckAddressOfNoDeref(InputExpr);
     RecordModifiableNonNullParam(*this, InputExpr);
     break;
   case UO_Deref: {
     Input = DefaultFunctionArrayLvalueConversion(Input.get());
+    Input = CheckUnsealPointer(Input, true);
     if (Input.isInvalid()) return ExprError();
     resultType = CheckIndirectionOperand(*this, Input.get(), VK, OpLoc);
     break;
@@ -16016,7 +16317,7 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     break;
   case IncompatiblePointerDiscardsQualifiers: {
     // Perform array-to-pointer decay if necessary.
-    if (SrcType->isArrayType()) SrcType = Context.getArrayDecayedType(SrcType);
+    if (SrcType->isArrayType()) SrcType = GetDecayedArraySealedPointer(SrcType);
 
     isInvalid = true;
 

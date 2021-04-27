@@ -182,7 +182,7 @@ break; \
   if (const PointerType *Ty = QT->getAs<PointerType>()) {
     QT = Context.getPointerType(Desugar(Context, Ty->getPointeeType(),
                                         ShouldAKA),
-                                Ty->getPointerInterpretation(), Ty->getSealingType());
+                                Ty->getPointerInterpretation(), Ty->getSealingKind());
   } else if (const auto *Ty = QT->getAs<ObjCObjectPointerType>()) {
     QT = Context.getObjCObjectPointerType(Desugar(Context, Ty->getPointeeType(),
                                                   ShouldAKA));
@@ -190,12 +190,12 @@ break; \
     QT = Context.getLValueReferenceType(Desugar(Context, Ty->getPointeeType(),
                                                 ShouldAKA), true,
                                         Ty->getPointerInterpretation(),
-                                        Ty->getSealingType());
+                                        Ty->getSealingKind());
   } else if (const RValueReferenceType *Ty = QT->getAs<RValueReferenceType>()) {
     QT = Context.getRValueReferenceType(Desugar(Context, Ty->getPointeeType(),
                                                 ShouldAKA),
                                         Ty->getPointerInterpretation(),
-                                        Ty->getSealingType());
+                                        Ty->getSealingKind());
   } else if (const auto *Ty = QT->getAs<ObjCObjectType>()) {
     if (Ty->getBaseType().getTypePtr() != Ty && !ShouldAKA) {
       QualType BaseType = Desugar(Context, Ty->getBaseType(), ShouldAKA);

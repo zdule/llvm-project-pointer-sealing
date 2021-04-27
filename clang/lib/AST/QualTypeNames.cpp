@@ -375,7 +375,7 @@ QualType getFullyQualifiedType(QualType QT, const ASTContext &Ctx,
     QT = getFullyQualifiedType(QT->getPointeeType(), Ctx, WithGlobalNsPrefix);
     QT = Ctx.getPointerType(QT, QT->isCHERICapabilityType(Ctx)
                                     ? PIK_Capability : PIK_Integer,
-                            cast<PointerType>(QT.getTypePtr())->getSealingType());
+                            cast<PointerType>(QT.getTypePtr())->getSealingKind());
     // Add back the qualifiers.
     QT = Ctx.getQualifiedType(QT, Quals);
     return QT;

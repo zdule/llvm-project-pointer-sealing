@@ -3327,18 +3327,20 @@ void PragmaPointerInterpretation::HandlePragma(Preprocessor &PP,
 void PragmaPointerSealingMode::HandlePragma(Preprocessor &PP,
                                                PragmaIntroducer Introducer,
                                                Token &Tok) {
+  const char *args = "'push', 'pop', 'default', 'syntactic', 'dynamic' or 'unsealed'";
   PP.Lex(Tok);
   if (Tok.is(tok::eod)) {
     PP.Diag(Tok.getLocation(), diag::err_pragma_missing_argument)
         << "pointer_sealing" << /*Expected=*/true
-        << "'push', 'pop', 'default', 'sealed' or 'unsealed'";
+        << args;
     return;
   }
+  auto DiagInvalidArgument = [&]() {
+    PP.Diag(Tok.getLocation(), diag::warn_pragma_invalid_argument)
+        << PP.getSpelling(Tok) << "pointer_sealing" << 1 << args;
+  };
   if (Tok.isNot(tok::identifier) && Tok.isNot(tok::kw_default)) {
-    PP.Diag(Tok.getLocation(),
-            // TODO: dz308: add separate diagnostic (different from pointer interpretation
-            diag::err_pragma_pointer_interpretation_invalid_argument)
-        << PP.getSpelling(Tok);
+    DiagInvalidArgument();
     return;
   }
 
@@ -3348,21 +3350,17 @@ void PragmaPointerSealingMode::HandlePragma(Preprocessor &PP,
   else if (ArgumentIdentifier->getName() == "pop")
     Actions.ActOnPragmaPointerSealingModePop();
   else {
-    int sealing =
-        llvm::StringSwitch<int>(ArgumentIdentifier->getName())
-            .Case("sealed", 1)
-            .Case("unsealed", 0)
-            .Default(-1);
-    if (sealing == -1) {
-      PP.Diag(Tok.getLocation(),
-            // TODO: dz308: add separate diagnostic (different from pointer interpretation
-              diag::err_pragma_pointer_interpretation_invalid_argument)
-          << PP.getSpelling(Tok);
+    Optional<Sema::CHERIPointerSealingMode> SealingMode =
+        llvm::StringSwitch<Sema::CHERIPointerSealingMode>(ArgumentIdentifier->getName())
+            .Case("syntactic", Sema::CHERIPointerSealingMode::Static)
+            .Case("dynamic", Sema::CHERIPointerSealingMode::Dynamic)
+            .Case("unsealed", Sema::CHERIPointerSealingMode::Unsealed)
+            .Default({});
+    if (!SealingMode.hasValue()) {
+      DiagInvalidArgument();
       return;
     }
-    Actions.ActOnPragmaPointerSealingMode((sealing == 1) ?
-                  Sema::CHERIPointerSealingMode::AutoSealed :
-                  Sema::CHERIPointerSealingMode::AutoUnsealed);
+    Actions.ActOnPragmaPointerSealingMode( SealingMode.getValue());
   }
 
   PP.Lex(Tok);

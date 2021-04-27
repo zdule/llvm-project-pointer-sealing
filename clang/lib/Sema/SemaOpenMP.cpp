@@ -37,6 +37,8 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Frontend/OpenMP/OMPConstants.h"
 #include <set>
+#include <clang/Sema/Sema.h>
+
 
 using namespace clang;
 using namespace llvm::omp;

@@ -134,7 +134,7 @@ class VarTemplateDecl;
 class VTableContextBase;
 struct BlockVarCopyInit;
 
-#define UNCERTAIN_SEALING_TYPE 0
+#define UNCERTAIN_SEALING_TYPE PSK_Unsealed
 
 namespace Builtin {
 
@@ -1197,19 +1197,23 @@ public:
   /// Return the uniqued reference to the type for a pointer to
   /// the specified type.
   QualType getPointerType(QualType T) const {
-    return getPointerType(T, getDefaultPointerInterpretation(), 0);
+    return getPointerType(T, getDefaultPointerInterpretation(),
+                          PSK_Unsealed);
   }
   QualType getPointerType(QualType T, PointerInterpretationKind PIK,
-                          unsigned SealingType) const;
+                          PointerSealingKind SealingKind) const;
   CanQualType getPointerType(CanQualType T) const {
-    return getPointerType(T, getDefaultPointerInterpretation(), 0);
+    return getPointerType(T, getDefaultPointerInterpretation(),
+                          PSK_Unsealed);
   }
   CanQualType getPointerType(CanQualType T,
                              PointerInterpretationKind PIK,
-                             unsigned SealingType) const {
+                             PointerSealingKind SealingKind) const {
     return CanQualType::CreateUnsafe(getPointerType((QualType) T, PIK,
-                                                    SealingType));
+                                                    SealingKind));
   }
+  QualType getPointerTypeSealedAs(QualType PtrType, PointerSealingKind SealingKind);
+  QualType updatePointerPointeeType(QualType PtrType, QualType PointeeType);
 
   /// Return the uniqued reference to a type adjusted from the original
   /// type to a new type.
@@ -1286,20 +1290,21 @@ public:
   QualType getLValueReferenceType(QualType T,
                                   bool SpelledAsLValue = true) const {
     return getLValueReferenceType(T, SpelledAsLValue,
-                                  getDefaultPointerInterpretation(), 0);
+                                  getDefaultPointerInterpretation(),
+                                  PSK_Unsealed);
   }
   QualType getLValueReferenceType(QualType T, bool SpelledAsLValue,
                                   PointerInterpretationKind PIK,
-                                  unsigned SealingType) const;
+                                  PointerSealingKind SealingKind) const;
 
   /// Return the uniqued reference to the type for an rvalue reference
   /// to the specified type.
   QualType getRValueReferenceType(QualType T) const {
-    return getRValueReferenceType(T, getDefaultPointerInterpretation(), 0);
+    return getRValueReferenceType(T, getDefaultPointerInterpretation(), PSK_Unsealed);
   }
   QualType getRValueReferenceType(QualType T,
                                   PointerInterpretationKind PIK,
-                                  unsigned SealingType) const;
+                                  PointerSealingKind SealingKind) const;
 
   /// Return the uniqued reference to the type for a member pointer to
   /// the specified type in the specified class.
@@ -1397,7 +1402,7 @@ public:
 
   QualType getDependentPointerType(QualType PointerType,
                                    PointerInterpretationKind PIK,
-                                   unsigned SealingType,
+                                   PointerSealingKind SealingKind,
                                    SourceLocation QualifierLoc) const;
 
   /// Return a K&R style C function type like 'int()'.

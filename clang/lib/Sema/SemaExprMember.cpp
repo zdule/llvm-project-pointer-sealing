@@ -1238,8 +1238,14 @@ static bool isPointerToRecordType(QualType T) {
 /// Perform conversions on the LHS of a member access expression.
 ExprResult
 Sema::PerformMemberExprBaseConversion(Expr *Base, bool IsArrow) {
-  if (IsArrow && !Base->getType()->isFunctionType())
-    return DefaultFunctionArrayLvalueConversion(Base);
+  if (IsArrow && !Base->getType()->isFunctionType()) {
+    ExprResult DecayedExpr = DefaultFunctionArrayLvalueConversion(Base);
+    if (DecayedExpr.isInvalid()) return ExprError();
+    if (const PointerType *PtrTy = DecayedExpr.get()->getType()->getAs<PointerType>())
+      if (PtrTy->getSealingKind() != PSK_Unsealed)
+        return CheckUnsealPointer(DecayedExpr.get(), true);
+    return DecayedExpr;
+  }
 
   return CheckPlaceholderExpr(Base);
 }

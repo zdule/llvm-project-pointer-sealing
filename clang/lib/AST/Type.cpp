@@ -287,23 +287,25 @@ DependentPointerType::DependentPointerType(const ASTContext &Context,
                                            QualType PointerType,
                                            QualType Canonical,
                                            PointerInterpretationKind PIK,
-                                           unsigned SealingType,
+                                           PointerSealingKind SealingKind,
                                            SourceLocation Loc)
     : Type(DependentPointer, Canonical,
            TypeDependence::DependentInstantiation |
                PointerType->getDependence()),
       Context(Context), PointerType(PointerType), Loc(Loc) {
   DependentPointerTypeBits.PIK = PIK;
+  DependentPointerTypeBits.SealingKind = SealingKind.getValue();
+  assertValidCapabilitySealingCombination();
 }
 
 void DependentPointerType::Profile(llvm::FoldingSetNodeID &ID,
                                    const ASTContext &Context,
                                    QualType PointerType,
                                    PointerInterpretationKind PIK,
-                                   unsigned SealingType) {
+                                   PointerSealingKind SealingKind) {
   ID.AddPointer(PointerType.getAsOpaquePtr());
   ID.AddInteger(PIK);
-  ID.AddInteger(SealingType);
+  ID.AddInteger(SealingKind.getValue());
 }
 
 MatrixType::MatrixType(TypeClass tc, QualType matrixType, QualType canonType,
@@ -1001,7 +1003,7 @@ public:
       return QualType(T, 0);
 
     return Ctx.getPointerType(pointeeType, T->getPointerInterpretation(),
-                              T->getSealingType());
+                              T->getSealingKind());
   }
 
   QualType VisitBlockPointerType(const BlockPointerType *T) {
@@ -1026,7 +1028,7 @@ public:
 
     return Ctx.getLValueReferenceType(pointeeType, T->isSpelledAsLValue(),
                                       T->getPointerInterpretation(),
-                                      T->getSealingType());
+                                      T->getSealingKind());
   }
 
   QualType VisitRValueReferenceType(const RValueReferenceType *T) {
@@ -1039,8 +1041,7 @@ public:
       return QualType(T, 0);
 
     return Ctx.getRValueReferenceType(pointeeType,
-                                      T->getPointerInterpretation(),
-                                      T->getSealingType());
+                                      T->getPointerInterpretation(), T->getSealingKind());
   }
 
   QualType VisitMemberPointerType(const MemberPointerType *T) {

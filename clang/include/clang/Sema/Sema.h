@@ -1690,7 +1690,7 @@ public:
                                           SourceLocation QualifierLoc);
 
   QualType BuildPointerSealedAttr(QualType T,
-                                          unsigned SealingType,
+                                          PointerSealingKind SealingKind,
                                           SourceLocation QualifierLoc);
 
   bool CheckQualifiedFunctionForTypeId(QualType T, SourceLocation Loc);
@@ -9631,9 +9631,10 @@ public:
     PointerInterpretationStack.pop_back();
   }
 
-  enum CHERIPointerSealingMode {
-    AutoSealed,
-    AutoUnsealed,
+  enum class CHERIPointerSealingMode {
+    Unsealed,
+    Static,
+    Dynamic,
   };
   CHERIPointerSealingMode PointerSealingMode;
   llvm::SmallVector<CHERIPointerSealingMode, 4> PointerSealingModeStack;
@@ -9647,7 +9648,9 @@ public:
   void ActOnPragmaPointerSealingMode(CHERIPointerSealingMode mode) {
     PointerSealingMode = mode;
   }
-  unsigned GetPointerSealingType(QualType PointeeType);
+
+  PointerSealingKind GetPointerSealingKind(bool InMemory);
+  QualType GetDecayedArraySealedPointer(QualType ArrayType);
 
   enum class PragmaPackDiagnoseKind {
     NonDefaultStateAtInclude,
@@ -10991,6 +10994,19 @@ public:
   /// implicitly converted to capability type ToTy
   bool ImpCastPointerToCHERICapability(QualType FromTy, QualType ToTy,
                                        Expr *&From, bool Diagnose);
+  /// CheckSealingKindConversionChecks - Implicit conversion of E's sealing kind
+  /// to ResultPSK. Expr is assumed to be a valid expression of pointer type.
+  /// If conversion is invalid, returns true and outputs diagnostics,
+  /// Otherwise E is rewritten and last implicit cast's CastKind is written to Kind.
+  bool CheckSealingKindConversion(ExprResult &E, PointerSealingKind ResultPSK,
+                                  CastKind &Kind, bool RewriteExpr=true,
+                                  bool PerformLast=true);
+  bool CheckSealingKindConversion(ExprResult &E, PointerSealingKind ResultPSK,
+                                  bool RewriteExpr=true, bool PerformLast=true);
+  /// CheckUnsealPointer - Checks and performs implicit unsealing of a pointer.
+  /// Unsealed expression is returned. Passes through invalid expressions.
+  /// On failure diagnostics are emitted and ExprError() is returned.
+  ExprResult CheckUnsealPointer(ExprResult Src, bool CompletelyUnseal=false);
 
   /// ScalarTypeToBooleanCastKind - Returns the cast kind corresponding
   /// to the conversion from scalar type ScalarTy to the Boolean type.
@@ -12630,7 +12646,6 @@ public:
   /// Adds Callee to DeviceCallGraph if we don't know if its caller will be
   /// codegen'ed yet.
   bool checkSYCLDeviceFunction(SourceLocation Loc, FunctionDecl *Callee);
-  QualType GetUnsealedPointerType(QualType PointerType);
 };
 
 /// RAII object that enters a new expression evaluation context.

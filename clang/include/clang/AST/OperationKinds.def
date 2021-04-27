@@ -60,6 +60,33 @@ CAST_OPERATION(Dependent)
 /// Vector coercions are bitcasts.
 CAST_OPERATION(BitCast)
 
+// Cheri sealed pointer cast operations:
+
+
+// CK_StaticUnsealedToUnsealedPointerCast
+// This is a NoOp
+// CAST_OPERATION(StaticUnsealedToUnsealedPointerCast)
+
+/// CK_DynamicUnsealedToUnsealedPointerCast
+CAST_OPERATION(DynamicUnsealedToUnsealedPointerCast)
+
+/// CK_StaticSealedToStaticUnsealedPointerCast
+CAST_OPERATION(StaticSealedToStaticUnsealedPointerCast)
+
+/// CK_DynamicSealedToDynamicUnsealedPointerCast
+CAST_OPERATION(DynamicSealedToDynamicUnsealedPointerCast)
+
+/// CK_StaticUnsealedToStaticSealedPointerCast
+CAST_OPERATION(StaticUnsealedToStaticSealedPointerCast)
+
+/// CK_DynamicUnsealedToDynamicSealedPointerCast
+CAST_OPERATION(DynamicUnsealedToDynamicSealedPointerCast)
+
+/// CK_StaticUnsealedPointeeCast
+CAST_OPERATION(StaticUnsealedPointeeCast)
+
+/// Note: pointee type cast for dynamically sealed pointers is a noop
+
 /// CK_LValueBitCast - A conversion which reinterprets the address of
 /// an l-value as an l-value of a different kind.  Used for
 /// reinterpret_casts of l-value expressions to reference types.
@@ -347,9 +374,6 @@ CAST_OPERATION(AddressSpaceConversion)
 
 // Convert a CHERI capability to a pointer.
 CAST_OPERATION(CHERICapabilityToPointer)
-
-// Convert between sealed CHERI capabilities with different sealing types.
-CAST_OPERATION(CHERISealedCapabilityConversion)
 
 // Convert a pointer to a CHERI capability.
 CAST_OPERATION(PointerToCHERICapability)

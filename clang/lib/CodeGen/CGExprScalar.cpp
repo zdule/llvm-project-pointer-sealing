@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CGCXXABI.h"
+#include "CGCheriCast.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
@@ -2378,48 +2379,30 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
 
     return Builder.CreateBitCast(Src, DstTy);
   }
-  case CK_CHERISealedCapabilityConversion:
-  {
+  case CK_DynamicUnsealedToUnsealedPointerCast: {
     auto &M = CGF.CGM.getModule();
-    auto *CapSeal = M.getNamedGlobal("__cheri_sealing_capability");
-    if (!CapSeal) {
-      // Create a global variable for the sealing capability
-      // Copied from CHERI_errorno
-      // TODO: dz308 don't hardcode AddressSpace 200
-      CapSeal = new llvm::GlobalVariable(M, CGF.VoidCheriCapTy,
-          /*isConstant*/false, llvm::GlobalValue::ExternalLinkage,
-                                            nullptr, "__cheri_sealing_capability", nullptr, llvm::GlobalValue::NotThreadLocal,
-                                            200);
-    }
-
-    Value *InCap = Visit(const_cast<Expr*>(E));
-
-    InCap = Builder.CreateBitCast(InCap, CGF.VoidCheriCapTy);
-    // TODO: dz308: don't hardcode 16 byte alignment
-    Value *SealCap = Builder.CreateLoad(Address(CapSeal, CharUnits::fromQuantity(16)));
-
-    unsigned OldSealingType = E->getType()->castAs<PointerType>()
-        ->getSealingType();
-    unsigned NewSealingType = DestTy->castAs<PointerType>()->getSealingType();
-    if (OldSealingType != 0) {
-      Value *OldSealingTypeConst = llvm::ConstantInt::get(CGF.SizeTy, OldSealingType);
-      Value *UnsealCap =
-          Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_offset_set,
-                                  {CGF.SizeTy}, {SealCap, OldSealingTypeConst});
-      InCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_unseal, {},
-                                      {InCap, UnsealCap});
-    }
-
-    if (NewSealingType != 0)
-    {
-      Value *NewSealingTypeConst = llvm::ConstantInt::get(CGF.SizeTy, NewSealingType);
-      SealCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_offset_set,
-                                        {CGF.SizeTy},
-                                        {SealCap, NewSealingTypeConst});
-      InCap = Builder.CreateIntrinsic(llvm::Intrinsic::cheri_cap_seal, {},
-                                     {InCap, SealCap});
-    }
-    return Builder.CreateBitCast(InCap,ConvertType(E->getType()));
+    llvm::Value *SealCap = CGF.GetOrCreateSealingCap();
+    CodeGenFunction::PointerOTypePair DynUnsealed =
+        CGF.EmitDynamicUnsealedExpr(const_cast<Expr*>(E));
+    return DynUnsealed.first;
+  }
+  case CK_StaticSealedToStaticUnsealedPointerCast: {
+    return UnsealCapability(CGF, Visit(const_cast<Expr*>(E)), E->getType()->castAs<PointerType>());
+  }
+  case CK_StaticUnsealedToStaticSealedPointerCast: {
+    return SealCapability(CGF, Visit(const_cast<Expr*>(E)), E->getType()->castAs<PointerType>());
+  }
+  case CK_DynamicUnsealedToDynamicSealedPointerCast: {
+    CodeGenFunction::PointerOTypePair DynUnsealed =
+        CGF.EmitDynamicUnsealedExpr(const_cast<Expr*>(E));
+    return SealCapability(CGF, DynUnsealed.first,
+                          E->getType()->castAs<PointerType>(), DynUnsealed.second);
+  }
+  case CK_StaticUnsealedPointeeCast: {
+    auto &M = CGF.CGM.getModule();
+    Value *InCap = Visit(E);
+    EmitStaticUnsealedTypeCheck(CGF, InCap, DestTy->castAs<PointerType>());
+    return Builder.CreateBitCast(InCap, ConvertType(DestTy));
   }
   case CK_AddressSpaceConversion:
   // FIXME: these two should probably be moved
@@ -2561,13 +2544,24 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     return Addr;
   }
 
-  case CK_NullToPointer:
+  case CK_NullToPointer: {
     if (MustVisitNullValue(E))
       CGF.EmitIgnoredExpr(E);
 
-    return CGF.CGM.getNullPointer(cast<llvm::PointerType>(ConvertType(DestTy)),
-                              DestTy);
-
+    Value *NullConstant = CGF.CGM.getNullPointer(
+        cast<llvm::PointerType>(ConvertType(DestTy)), DestTy);
+    switch (DestTy->castAs<PointerType>()->getSealingKind()) {
+    case PSK_Unsealed:
+    case PSK_StaticUnsealed:
+      return NullConstant;
+    case PSK_StaticSealed:
+    case PSK_DynamicSealed:
+      return SealCapability(CGF, NullConstant, DestTy->castAs<PointerType>());
+    case PSK_DynamicUnsealed:
+      llvm_unreachable("Dynamic unsealed is not a scalar expr");
+    }
+    llvm_unreachable("all switch cases should have been explored");
+  }
   case CK_NullToMemberPointer: {
     if (MustVisitNullValue(E))
       CGF.EmitIgnoredExpr(E);
@@ -2963,6 +2957,10 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
     input = value;
   }
 
+  Value *OType = nullptr;
+  if (const PointerType* PtrTy = type->getAs<PointerType>()) {
+    std::tie(value, OType) = EmitAppropriateUnseal(CGF, value, PtrTy);
+  }
   // Special case of integer increment that we have to check first: bool++.
   // Due to promotion rules, we get:
   //   bool++ -> bool = bool + 1
@@ -3188,6 +3186,10 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
                                          /*SignedIndices=*/false, isSubtraction,
                                          E->getExprLoc(), "incdec.objptr");
     value = Builder.CreateBitCast(value, input->getType());
+  }
+
+  if (const PointerType* PtrTy = type->getAs<PointerType>()) {
+    value = EmitAppropriateSeal(CGF, {value, OType}, PtrTy);
   }
 
   if (atomicPHI) {
@@ -3462,7 +3464,10 @@ Value *ScalarExprEmitter::VisitUnaryImag(const UnaryOperator *E) {
 BinOpInfo ScalarExprEmitter::EmitBinOps(const BinaryOperator *E) {
   TestAndClearIgnoreResultAssign();
   BinOpInfo Result;
-  Result.LHS = Visit(E->getLHS());
+  if (CGF.getEvaluationKind(E->getLHS()->getType()) == TEK_DynamicUnsealed)
+    Result.LHS = CGF.EmitDynamicUnsealedExpr(E->getLHS()).first;
+  else
+    Result.LHS = Visit(E->getLHS());
 #ifdef NOTYET
   auto RHSExpr = E->getRHS();
   bool PromoteRHSToPtrDiff = false;
@@ -3485,7 +3490,10 @@ BinOpInfo ScalarExprEmitter::EmitBinOps(const BinaryOperator *E) {
                                            "promote");
   }
 #else
-  Result.RHS = Visit(E->getRHS());
+  if (CGF.getEvaluationKind(E->getRHS()->getType()) == TEK_DynamicUnsealed)
+    Result.RHS = CGF.EmitDynamicUnsealedExpr(E->getRHS()).first;
+  else
+    Result.RHS = Visit(E->getRHS());
 #endif
   Result.Ty  = E->getType();
   Result.Opcode = E->getOpcode();
@@ -3584,6 +3592,10 @@ LValue ScalarExprEmitter::EmitCompoundAssignLValue(
   else
     OpInfo.LHS = EmitLoadOfLValue(LHSLV, E->getExprLoc());
 
+  Value *OType = nullptr;
+  if (const PointerType* PtrTy = E->getLHS()->getType()->getAs<PointerType>()) {
+    std::tie(OpInfo.LHS, OType) = EmitAppropriateUnseal(CGF, OpInfo.LHS, PtrTy);
+  }
   SourceLocation Loc = E->getExprLoc();
   OpInfo.LHS =
       EmitScalarConversion(OpInfo.LHS, LHSTy, E->getComputationLHSType(), Loc);
@@ -3610,6 +3622,10 @@ LValue ScalarExprEmitter::EmitCompoundAssignLValue(
   // potentially with Implicit Conversion sanitizer check.
   Result = EmitScalarConversion(Result, E->getComputationResultType(), LHSTy,
                                 Loc, ScalarConversionOpts(CGF.SanOpts));
+
+  if (const PointerType* PtrTy = E->getLHS()->getType()->getAs<PointerType>()) {
+    Result = EmitAppropriateSeal(CGF, {Result, OType}, PtrTy);
+  }
 
   if (atomicPHI) {
     llvm::BasicBlock *curBlock = Builder.GetInsertBlock();
@@ -5618,4 +5634,26 @@ CodeGenFunction::EmitCheckedInBoundsGEP(Value *Ptr, ArrayRef<Value *> IdxList,
   EmitCheck(Checks, SanitizerHandler::PointerOverflow, StaticArgs, DynamicArgs);
 
   return GEPVal;
+}
+
+Value *CodeGenFunction::EmitPtrBinOp(Value *LHS, Value *RHS, QualType Ty,
+                                     BinaryOperator::Opcode Opcode,
+                                     const Expr *E) {
+  ScalarExprEmitter Scalar(*this);
+  BinOpInfo Op;
+  Op.LHS = LHS;
+  Op.RHS = RHS;
+  Op.E = E;
+  Op.Ty = Ty;
+  assert(Opcode == BO_Add || Opcode == BO_Sub);
+  Op.Opcode = Opcode;
+
+  if (!(E->getType()->isCHERICapabilityType(getContext()) &&
+        !E->getType()->isPointerType()))
+    return Scalar.EmitAdd(Op);
+
+  Op.LHS = Scalar.GetBinOpVal(Op, LHS);
+  Op.RHS = Scalar.GetBinOpVal(Op, RHS);
+  Value *V = (Opcode == BO_Add) ? Scalar.EmitAdd(Op) : Scalar.EmitSub(Op);
+  return Scalar.GetBinOpResult(Op, LHS, RHS, V);
 }
